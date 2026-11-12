@@ -1,0 +1,939 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
+  <meta name="theme-color" content="#0A0E17">
+  <meta name="description" content="PALMLOCK — Touch Beyond Vision. Accessibility-focused QR payment security and emergency assistance for visually impaired individuals.">
+  <title>PALMLOCK — Touch Beyond Vision</title>
+  <link rel="stylesheet" href="css/user.css">
+</head>
+<body data-theme="default" data-font-size="standard">
+
+  <!-- Accessible Skip Navigation -->
+  <a href="#main-content" class="skip-link">Skip to main content</a>
+
+  <!-- ARIA Live Regions for Screen Reader Announcements -->
+  <div id="aria-live-polite" class="sr-only" aria-live="polite" aria-atomic="true"></div>
+  <div id="aria-live-assertive" class="sr-only" aria-live="assertive" aria-atomic="true"></div>
+
+  <!-- Visual Haptic Feedback Notification (Desktop/Browsers without physical motors) -->
+  <div id="haptic-visual-indicator" class="haptic-visual-indicator" role="status" aria-hidden="true">
+    Vibration Pulse: 100ms
+  </div>
+
+  <div class="desktop-wrapper">
+    <!-- Desktop Preview Bar -->
+    <header class="desktop-preview-bar" role="region" aria-label="Desktop Preview Controls">
+      <div>PALMLOCK Mobile Environment</div>
+      <div class="desktop-preview-controls">
+        <label for="screen-fast-nav" class="sr-only">Quick Screen Switcher</label>
+        <select id="screen-fast-nav" class="btn-preview-toggle" aria-label="Jump directly to screen for testing">
+          <option value="screen-welcome">1. Welcome / Login</option>
+          <option value="screen-register">2. Registration</option>
+          <option value="screen-setup">3. User Setup</option>
+          <option value="screen-contacts">4. Trusted Contacts</option>
+          <option value="screen-dashboard" selected>5. Home Dashboard</option>
+          <option value="screen-scanner">6. QR Scanner</option>
+          <option value="screen-verification">7. Merchant Verify</option>
+          <option value="screen-gesture-pin">8. Gesture PIN</option>
+          <option value="screen-stealth">9. Stealth Mode</option>
+          <option value="screen-payment-result">10. Payment Result</option>
+          <option value="screen-history">11. Payment History</option>
+          <option value="screen-tutorial">12. Tutorial</option>
+          <option value="screen-practice">13. Gesture Practice</option>
+          <option value="screen-settings">14. Settings</option>
+        </select>
+        <button type="button" id="btn-toggle-fullscreen" class="btn-preview-toggle" aria-label="Toggle Fullscreen / Mobile Frame View">
+          Toggle Frame
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Mobile Application Container -->
+    <div class="app-container" id="app-container">
+
+      <!-- Top Persistent Accessibility Bar -->
+      <aside class="top-accessibility-bar" aria-label="Quick Accessibility Controls">
+        <a href="#screen-dashboard" class="brand-badge" id="brand-home-link" aria-label="PALMLOCK Home">
+          <span class="brand-dot" aria-hidden="true"></span>
+          <span>PALMLOCK</span>
+        </a>
+
+        <div class="quick-actions-row">
+          <!-- Voice Audio Toggle -->
+          <button type="button" id="btn-toggle-speech" class="btn-icon-access" aria-label="Toggle spoken audio announcements" aria-pressed="true" title="Audio Announcements: On">
+            <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+              <path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+              <path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path>
+            </svg>
+          </button>
+
+          <!-- Contrast Theme Switcher -->
+          <button type="button" id="btn-cycle-theme" class="btn-icon-access" aria-label="Cycle high-contrast color themes" title="Switch Contrast Theme">
+            <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"></circle>
+              <path d="M12 2a10 10 0 0 1 0 20z" fill="currentColor"></path>
+            </svg>
+          </button>
+
+          <!-- Font Size Scaler -->
+          <button type="button" id="btn-cycle-font" class="btn-icon-access" aria-label="Change text size: Standard, Large, Extra Large" title="Text Sizing">
+            <span aria-hidden="true" style="font-weight: bold; font-size: 1.1rem;">A+</span>
+          </button>
+
+          <!-- Discreet Emergency SOS Button -->
+          <button type="button" id="btn-trigger-sos" class="btn-emergency-top" aria-label="Emergency Assistance Alert">
+            <span>SOS</span>
+          </button>
+        </div>
+      </aside>
+
+      <!-- Main Application Views (SPA Container) -->
+      <main id="main-content" class="app-main" tabindex="-1">
+
+        <!-- ===================================================================
+             SCREEN 1: WELCOME AND LOGIN SCREEN
+             =================================================================== -->
+        <section id="screen-welcome" class="app-screen" aria-labelledby="heading-welcome">
+          <div class="hero-graphic-box">
+            <div class="hero-icon-ring" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+              </svg>
+            </div>
+            <h1 id="heading-welcome" class="heading-hero">PALMLOCK</h1>
+            <p class="text-subtitle">Touch Beyond Vision. Secure QR payments with tactile and audio assistance.</p>
+          </div>
+
+          <button type="button" class="btn-audio-repeat" id="audio-btn-welcome" aria-label="Listen to welcome instructions">
+            <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path></svg>
+            <span>Tap to hear welcome message</span>
+          </button>
+
+          <div class="demo-badge-banner" role="note">
+            <span><strong>Demo Mode:</strong> Client-side simulation active.</span>
+            <button type="button" class="btn-preview-toggle" id="btn-fill-demo-login">Fill Demo User</button>
+          </div>
+
+          <form id="form-login" novalidate aria-label="PALMLOCK Account Sign-In">
+            <div class="form-group">
+              <label for="login-email" class="form-label">
+                <span>Email or Phone Number</span>
+                <span class="form-label-hint">Required</span>
+              </label>
+              <input type="text" id="login-email" class="form-input" autocomplete="username" placeholder="e.g. user@palmlock.app" required aria-required="true">
+              <div id="login-email-error" class="form-error" role="alert"></div>
+            </div>
+
+            <div class="form-group">
+              <label for="login-password" class="form-label">
+                <span>Account Password</span>
+                <span class="form-label-hint">Required</span>
+              </label>
+              <input type="password" id="login-password" class="form-input" autocomplete="current-password" placeholder="Enter password" required aria-required="true">
+              <div id="login-password-error" class="form-error" role="alert"></div>
+            </div>
+
+            <button type="submit" class="btn btn-primary btn-full btn-large" style="margin-bottom: var(--space-3);">
+              Sign In to PALMLOCK
+            </button>
+
+            <button type="button" class="btn btn-secondary btn-full" id="btn-goto-register">
+              Create New Account
+            </button>
+          </form>
+        </section>
+
+        <!-- ===================================================================
+             SCREEN 2: REGISTRATION SCREEN
+             =================================================================== -->
+        <section id="screen-register" class="app-screen" aria-labelledby="heading-register">
+          <header class="screen-header">
+            <div class="screen-header-left">
+              <button type="button" class="btn-header-back" data-back="screen-welcome" aria-label="Back to Login">‹</button>
+              <h1 id="heading-register" class="screen-title">Create Account</h1>
+            </div>
+          </header>
+
+          <p class="text-subtitle" style="margin-top: var(--space-3);">
+            Set up your accessible identity profile. You will configure your custom gesture PIN in the next step.
+          </p>
+
+          <form id="form-register" novalidate aria-label="Registration Form">
+            <div class="form-group">
+              <label for="reg-fullname" class="form-label">Full Name</label>
+              <input type="text" id="reg-fullname" class="form-input" placeholder="e.g. Maya Lin" required>
+              <div id="reg-name-error" class="form-error" role="alert"></div>
+            </div>
+
+            <div class="form-group">
+              <label for="reg-phone" class="form-label">Mobile Phone Number</label>
+              <input type="tel" id="reg-phone" class="form-input" placeholder="e.g. +1 (555) 019-2834" required>
+              <div id="reg-phone-error" class="form-error" role="alert"></div>
+            </div>
+
+            <div class="form-group">
+              <label for="reg-vision-level" class="form-label">Visual Impairment Level</label>
+              <select id="reg-vision-level" class="form-select">
+                <option value="total">Totally Blind (Screen Reader / Pure Haptic)</option>
+                <option value="low-vision" selected>Low Vision (High Contrast / Large Text)</option>
+                <option value="legally-blind">Legally Blind (Audio Assistance Preferred)</option>
+                <option value="sighted-tester">Sighted Tester / Accessibility Auditor</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label for="reg-password" class="form-label">Create Password</label>
+              <input type="password" id="reg-password" class="form-input" placeholder="At least 6 characters" required>
+              <div id="reg-password-error" class="form-error" role="alert"></div>
+            </div>
+
+            <button type="submit" class="btn btn-primary btn-full btn-large" style="margin-top: var(--space-3);">
+              Continue to Preferences
+            </button>
+          </form>
+        </section>
+
+        <!-- ===================================================================
+             SCREEN 3: USER SETUP SCREEN
+             =================================================================== -->
+        <section id="screen-setup" class="app-screen" aria-labelledby="heading-setup">
+          <header class="screen-header">
+            <div class="screen-header-left">
+              <button type="button" class="btn-header-back" data-back="screen-register" aria-label="Back">‹</button>
+              <h1 id="heading-setup" class="screen-title">Accessibility Setup</h1>
+            </div>
+          </header>
+
+          <p class="text-subtitle" style="margin-top: var(--space-3);">
+            Tailor PALMLOCK sensory feedback to your exact tactile and auditory needs.
+          </p>
+
+          <div class="card">
+            <h2 class="heading-section" style="font-size: 1.1rem;">Feedback Modes</h2>
+            
+            <div class="toggle-row">
+              <div>
+                <label for="setup-audio-toggle" style="font-weight: 600;">Spoken Audio Assistance</label>
+                <div style="font-size: 0.8rem; color: var(--text-muted);">Speaks camera position & payment values</div>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="setup-audio-toggle" checked>
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+
+            <div class="toggle-row">
+              <div>
+                <label for="setup-haptic-toggle" style="font-weight: 600;">Tactile Vibration Pulses</label>
+                <div style="font-size: 0.8rem; color: var(--text-muted);">Vibration pulses for QR centering</div>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="setup-haptic-toggle" checked>
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+          </div>
+
+          <div class="card">
+            <h2 class="heading-section" style="font-size: 1.1rem;">Default Theme Preference</h2>
+            <div class="form-group">
+              <label for="setup-theme-select" class="form-label">Display Palette</label>
+              <select id="setup-theme-select" class="form-select">
+                <option value="default">Deep Obsidian & Amber (Standard Dark)</option>
+                <option value="yellow-black">High-Contrast Yellow on Black (WCAG AAA)</option>
+                <option value="white-black">High-Contrast White on Black</option>
+                <option value="light-blue">Soft Blue on Off-White</option>
+              </select>
+            </div>
+          </div>
+
+          <button type="button" class="btn btn-primary btn-full btn-large" id="btn-save-setup">
+            Complete Profile Setup
+          </button>
+        </section>
+
+        <!-- ===================================================================
+             SCREEN 4: TRUSTED CONTACT SETUP INTERFACE
+             =================================================================== -->
+        <section id="screen-contacts" class="app-screen" aria-labelledby="heading-contacts">
+          <header class="screen-header">
+            <div class="screen-header-left">
+              <button type="button" class="btn-header-back" data-back="screen-dashboard" aria-label="Back to Dashboard">‹</button>
+              <h1 id="heading-contacts" class="screen-title">Trusted Contacts</h1>
+            </div>
+            <div class="screen-header-right">
+              <button type="button" class="btn-preview-toggle" id="btn-add-contact-trigger">+ Add New</button>
+            </div>
+          </header>
+
+          <p class="text-subtitle" style="margin-top: var(--space-3);">
+            Designated emergency guardians who are discreetly notified if a duress PIN or SOS alert is activated.
+          </p>
+
+          <div class="demo-badge-banner" role="note">
+            <span><strong>Notice:</strong> Emergency dispatch simulated in demonstration mode.</span>
+          </div>
+
+          <div id="contacts-list-container" class="history-list" role="list" aria-label="Emergency contacts registry">
+            <!-- Dynamically populated from contacts.js -->
+          </div>
+        </section>
+
+        <!-- ===================================================================
+             SCREEN 5: USER HOME DASHBOARD
+             =================================================================== -->
+        <section id="screen-dashboard" class="app-screen active" aria-labelledby="heading-dashboard">
+          <div class="balance-card">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <span style="font-size: var(--font-size-sm); color: var(--text-muted); font-weight: 600;">ACTIVE WALLET BALANCE</span>
+              <span class="history-badge success">Verified Safe</span>
+            </div>
+            <div class="balance-amount" id="dashboard-balance" aria-label="Active Balance: 1,420 dollars and 50 cents">
+              $1,420.50
+            </div>
+            <div style="font-size: var(--font-size-xs); color: var(--text-secondary);">
+              Linked Account: Chase Premier Checking (••4902)
+            </div>
+          </div>
+
+          <!-- Primary Accessibility Quick Actions Grid -->
+          <div class="quick-actions-grid" role="region" aria-label="Primary Quick Actions">
+            <button type="button" class="action-tile" id="dash-btn-scan" aria-label="Scan QR Code. Open directional camera.">
+              <div class="action-tile-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
+              </div>
+              <div>
+                <div class="action-tile-title">Scan QR</div>
+                <div class="action-tile-desc">Directional Audio Guide</div>
+              </div>
+            </button>
+
+            <button type="button" class="action-tile" id="dash-btn-stealth" aria-label="Stealth Mode. Black screen gesture entry.">
+              <div class="action-tile-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>
+              </div>
+              <div>
+                <div class="action-tile-title">Stealth Mode</div>
+                <div class="action-tile-desc">OLED Dark Security</div>
+              </div>
+            </button>
+
+            <button type="button" class="action-tile" id="dash-btn-practice" aria-label="Practice Gestures. Tactile swipe lab.">
+              <div class="action-tile-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="5 9 2 12 5 15"></polyline><polyline points="9 5 12 2 15 5"></polyline><polyline points="15 19 12 22 9 19"></polyline><polyline points="19 9 22 12 19 15"></polyline><line x1="2" y1="12" x2="22" y2="12"></line><line x1="12" y1="2" x2="12" y2="22"></line></svg>
+              </div>
+              <div>
+                <div class="action-tile-title">Practice Lab</div>
+                <div class="action-tile-desc">Directional Swipes</div>
+              </div>
+            </button>
+
+            <button type="button" class="action-tile" id="dash-btn-tutorial" aria-label="Interactive Tutorial. Learn audio & gesture features.">
+              <div class="action-tile-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+              </div>
+              <div>
+                <div class="action-tile-title">Tutorial</div>
+                <div class="action-tile-desc">Audio Walkthrough</div>
+              </div>
+            </button>
+          </div>
+
+          <!-- Recent Transactions Preview -->
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--space-3);">
+            <h2 class="heading-section" style="margin-bottom: 0;">Recent Activity</h2>
+            <button type="button" class="btn-preview-toggle" id="btn-see-all-history">View All</button>
+          </div>
+
+          <div id="dashboard-recent-list" class="history-list" role="list">
+            <!-- Dynamically populated -->
+          </div>
+        </section>
+
+        <!-- ===================================================================
+             SCREEN 6: QR SCANNER SCREEN
+             =================================================================== -->
+        <section id="screen-scanner" class="app-screen" aria-labelledby="heading-scanner">
+          <header class="screen-header">
+            <div class="screen-header-left">
+              <button type="button" class="btn-header-back" data-back="screen-dashboard" aria-label="Back to Dashboard">‹</button>
+              <h1 id="heading-scanner" class="screen-title">Directional QR Scanner</h1>
+            </div>
+            <div class="screen-header-right">
+              <button type="button" id="btn-toggle-camera-torch" class="btn-icon-access" aria-label="Toggle camera flashlight">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+              </button>
+            </div>
+          </header>
+
+          <p class="text-subtitle" style="margin-top: var(--space-2);">
+            Hold your phone steady. Directional audio and haptics will guide your camera to the merchant QR code.
+          </p>
+
+          <!-- Camera Viewport Box -->
+          <div class="scanner-viewport-box" id="scanner-viewport">
+            <video id="scanner-video-feed" class="scanner-video" playsinline autoplay muted aria-label="Live camera viewfinder"></video>
+            
+            <div class="scanner-reticle-overlay" aria-hidden="true">
+              <div class="scanner-corner corner-tl"></div>
+              <div class="scanner-corner corner-tr"></div>
+              <div class="scanner-corner corner-bl"></div>
+              <div class="scanner-corner corner-br"></div>
+            </div>
+          </div>
+
+          <!-- Real-Time Directional Guidance Compass -->
+          <div class="guidance-box" id="scanner-guidance-card" role="status" aria-live="polite">
+            <div class="guidance-arrow-indicator" id="scanner-guidance-arrow">
+              <span id="guidance-icon">↔️</span>
+              <span id="guidance-heading">Searching for QR code...</span>
+            </div>
+            <div class="guidance-text" id="scanner-guidance-instruction">
+              Move camera slowly across the checkout counter.
+            </div>
+            <div class="guidance-subtext" id="scanner-guidance-subtext">
+              Audio pitch will rise as the code nears center.
+            </div>
+          </div>
+
+          <!-- Simulated Payloads for Testing -->
+          <div class="card">
+            <h2 class="heading-section" style="font-size: 1rem; margin-bottom: var(--space-2);">Test Demonstration Codes</h2>
+            <div class="preset-payloads-row">
+              <button type="button" class="btn btn-secondary btn-full btn-simulate-qr" data-merchant="City Metro Transit" data-amount="4.50" data-fee="0.00" data-category="Transit">
+                Simulate: City Metro Transit ($4.50)
+              </button>
+              <button type="button" class="btn btn-secondary btn-full btn-simulate-qr" data-merchant="Green Valley Organic Foods" data-amount="34.80" data-fee="0.00" data-category="Groceries">
+                Simulate: Green Valley Groceries ($34.80)
+              </button>
+              <button type="button" class="btn btn-secondary btn-full btn-simulate-qr" data-merchant="Downtown Pharmacy Rx" data-amount="12.00" data-fee="0.00" data-category="Medical">
+                Simulate: Downtown Pharmacy ($12.00)
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <!-- ===================================================================
+             SCREEN 7: MERCHANT AND PAYMENT AMOUNT VERIFICATION SCREEN
+             =================================================================== -->
+        <section id="screen-verification" class="app-screen" aria-labelledby="heading-verification">
+          <header class="screen-header">
+            <div class="screen-header-left">
+              <button type="button" class="btn-header-back" data-back="screen-scanner" aria-label="Back to Scanner">‹</button>
+              <h1 id="heading-verification" class="screen-title">Payment Verification</h1>
+            </div>
+          </header>
+
+          <p class="text-subtitle" style="margin-top: var(--space-2);">
+            Carefully verify merchant identity and charge amount before entering your gesture PIN.
+          </p>
+
+          <button type="button" class="btn-audio-repeat" id="btn-read-payment-details" aria-label="Listen to payment details readout">
+            <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path></svg>
+            <span>Tap to hear amount & merchant readout</span>
+          </button>
+
+          <div class="verification-card" role="region" aria-label="Transaction Details">
+            <div class="merchant-badge">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"></polyline></svg>
+              <span>Verified Certified Merchant</span>
+            </div>
+
+            <div class="merchant-name-large" id="verify-merchant-name">
+              City Metro Transit
+            </div>
+
+            <div class="verify-amount-display" id="verify-amount-display" aria-label="Amount to pay: 4 dollars and 50 cents">
+              $4.50
+            </div>
+
+            <div class="verify-details-list">
+              <div class="verify-detail-row">
+                <span style="color: var(--text-muted);">Payment Method:</span>
+                <span style="font-weight: 600;">PALMLOCK Instant Safe Debit</span>
+              </div>
+              <div class="verify-detail-row">
+                <span style="color: var(--text-muted);">Processing Fee:</span>
+                <span style="font-weight: 600;">$0.00 (Zero Fee)</span>
+              </div>
+              <div class="verify-detail-row">
+                <span style="color: var(--text-muted);">QR Signature ID:</span>
+                <span style="font-family: var(--font-family-mono); font-size: 0.8rem;" id="verify-qr-hash">PL-88392-CERT</span>
+              </div>
+            </div>
+          </div>
+
+          <div style="display: flex; flex-direction: column; gap: var(--space-3);">
+            <button type="button" class="btn btn-primary btn-full btn-large" id="btn-proceed-to-pin">
+              Proceed to Gesture PIN
+            </button>
+            <button type="button" class="btn btn-outline btn-full" id="btn-cancel-payment">
+              Cancel Transaction
+            </button>
+          </div>
+        </section>
+
+        <!-- ===================================================================
+             SCREEN 8: GESTURE PIN INTERFACE
+             =================================================================== -->
+        <section id="screen-gesture-pin" class="app-screen" aria-labelledby="heading-gesture-pin">
+          <header class="screen-header">
+            <div class="screen-header-left">
+              <button type="button" class="btn-header-back" data-back="screen-verification" aria-label="Back to Verification">‹</button>
+              <h1 id="heading-gesture-pin" class="screen-title">Enter Gesture PIN</h1>
+            </div>
+            <div class="screen-header-right">
+              <button type="button" class="btn-preview-toggle" id="btn-switch-to-stealth" title="Switch to Pitch Black Stealth Mode">
+                Stealth
+              </button>
+            </div>
+          </header>
+
+          <p class="text-subtitle" style="margin-top: var(--space-2);">
+            Swipe in cardinal directions (Up, Down, Left, Right) or Tap anywhere in the canvas.
+          </p>
+
+          <!-- PIN Progress Slots -->
+          <div class="gesture-slots-row" role="group" aria-label="Entered PIN slots">
+            <div class="pin-slot" id="pin-slot-0" aria-label="Digit 1">-</div>
+            <div class="pin-slot" id="pin-slot-1" aria-label="Digit 2">-</div>
+            <div class="pin-slot" id="pin-slot-2" aria-label="Digit 3">-</div>
+            <div class="pin-slot" id="pin-slot-3" aria-label="Digit 4">-</div>
+          </div>
+
+          <!-- Gesture Interactive Canvas Area -->
+          <div class="gesture-canvas-area" id="pin-gesture-canvas" role="region" aria-label="Gesture touch pad. Swipe up, down, left, right or tap.">
+            <div class="gesture-guide-compass" aria-hidden="true">
+              <div></div><div class="compass-arrow">↑</div><div></div>
+              <div class="compass-arrow">←</div><div class="compass-center">PIN</div><div class="compass-arrow">→</div>
+              <div></div><div class="compass-arrow">↓</div><div></div>
+            </div>
+          </div>
+
+          <div class="gesture-controls-row">
+            <button type="button" class="btn btn-secondary" id="btn-pin-undo" aria-label="Undo last gesture swipe">
+              ‹ Undo Last
+            </button>
+            <button type="button" class="btn btn-secondary" id="btn-pin-clear" aria-label="Clear all entered gestures">
+              Clear All
+            </button>
+          </div>
+
+          <div class="card" style="padding: var(--space-3); font-size: var(--font-size-xs); color: var(--text-muted);">
+            <div><strong>Accessibility Note:</strong> Normal PIN is <code>UP, RIGHT, UP, TAP</code>. Discreet Duress PIN is <code>DOWN, DOWN, LEFT, LEFT</code>.</div>
+          </div>
+        </section>
+
+        <!-- ===================================================================
+             SCREEN 9: BLACK STEALTH MODE INTERFACE
+             =================================================================== -->
+        <section id="screen-stealth" class="screen-stealth-container" aria-label="Black Stealth Mode. Screen dimmed for privacy." tabindex="-1">
+          <div class="sr-only" aria-live="assertive">
+            Stealth Mode active. Screen is completely dark to prevent shoulder-surfing. The full screen is an active gesture surface. Double tap to exit stealth mode.
+          </div>
+
+          <div class="stealth-touch-surface" id="stealth-touch-canvas">
+            <!-- Low contrast hint for user reassurance, invisible at bystander angles -->
+            <p class="stealth-dim-instruction" aria-hidden="true">
+              STEALTH ACTIVE<br>
+              Swipe gesture PIN anywhere.<br>
+              Haptic pulses confirm each stroke.
+            </p>
+          </div>
+
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <button type="button" class="stealth-exit-button" id="btn-exit-stealth" aria-label="Exit Stealth Mode and return to normal screen">
+              Exit Stealth Mode
+            </button>
+            <span style="color: #111111; font-size: 0.75rem;" aria-hidden="true">PALMLOCK OLED</span>
+          </div>
+        </section>
+
+        <!-- ===================================================================
+             SCREEN 10: PAYMENT SUCCESS AND FAILURE SCREENS
+             =================================================================== -->
+        <section id="screen-payment-result" class="app-screen" aria-labelledby="heading-result">
+          <header class="screen-header">
+            <div class="screen-header-left">
+              <h1 id="heading-result" class="screen-title">Payment Status</h1>
+            </div>
+          </header>
+
+          <div id="result-success-container">
+            <div class="result-card">
+              <div class="result-icon-circle" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"></polyline></svg>
+              </div>
+              <h2 class="result-status-title" id="result-title">Payment Successful</h2>
+              <div style="font-size: var(--font-size-3xl); font-weight: bold; color: var(--accent-primary);" id="result-amount">
+                $4.50
+              </div>
+              <p style="color: var(--text-secondary); margin-top: var(--space-2);" id="result-merchant-label">
+                Paid to City Metro Transit
+              </p>
+
+              <div class="result-receipt-box">
+                <div class="verify-detail-row">
+                  <span style="color: var(--text-muted);">Reference No:</span>
+                  <span style="font-family: var(--font-family-mono);" id="result-ref">TX-99482103</span>
+                </div>
+                <div class="verify-detail-row" style="margin-top: var(--space-1);">
+                  <span style="color: var(--text-muted);">Timestamp:</span>
+                  <span id="result-time">Today, Just now</span>
+                </div>
+                <div class="verify-detail-row" style="margin-top: var(--space-1);">
+                  <span style="color: var(--text-muted);">Security Check:</span>
+                  <span style="color: var(--color-success); font-weight: 600;">Gesture PIN Matched</span>
+                </div>
+              </div>
+            </div>
+
+            <button type="button" class="btn btn-primary btn-full btn-large" id="btn-result-done">
+              Return to Home Dashboard
+            </button>
+          </div>
+
+          <div id="result-failure-container" style="display: none;">
+            <div class="result-card failure">
+              <div class="result-icon-circle failure" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+              </div>
+              <h2 class="result-status-title" id="failure-title">Payment Rejected</h2>
+              <p style="color: var(--text-secondary); margin-top: var(--space-2);" id="failure-reason">
+                Incorrect gesture sequence entered.
+              </p>
+            </div>
+
+            <div style="display: flex; flex-direction: column; gap: var(--space-3);">
+              <button type="button" class="btn btn-secondary btn-full btn-large" id="btn-result-retry">
+                Try Gesture Again
+              </button>
+              <button type="button" class="btn btn-outline btn-full" id="btn-result-cancel">
+                Cancel to Home
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <!-- ===================================================================
+             SCREEN 11: PAYMENT HISTORY INTERFACE
+             =================================================================== -->
+        <section id="screen-history" class="app-screen" aria-labelledby="heading-history">
+          <header class="screen-header">
+            <div class="screen-header-left">
+              <button type="button" class="btn-header-back" data-back="screen-dashboard" aria-label="Back to Dashboard">‹</button>
+              <h1 id="heading-history" class="screen-title">Payment History</h1>
+            </div>
+          </header>
+
+          <p class="text-subtitle" style="margin-top: var(--space-2);">
+            Review past transactions with full auditory breakdown. Tap any transaction to hear details.
+          </p>
+
+          <div class="form-group">
+            <label for="history-filter-select" class="form-label">Filter Transactions</label>
+            <select id="history-filter-select" class="form-select">
+              <option value="all">All Recent Transactions</option>
+              <option value="completed">Completed Payments</option>
+              <option value="duress">Duress & Flagged Events</option>
+            </select>
+          </div>
+
+          <div id="history-full-list" class="history-list" role="list" aria-label="Transaction history list">
+            <!-- Dynamically populated from payments.js -->
+          </div>
+        </section>
+
+        <!-- ===================================================================
+             SCREEN 12: ACCESSIBILITY TUTORIAL
+             =================================================================== -->
+        <section id="screen-tutorial" class="app-screen" aria-labelledby="heading-tutorial">
+          <header class="screen-header">
+            <div class="screen-header-left">
+              <button type="button" class="btn-header-back" data-back="screen-dashboard" aria-label="Back to Dashboard">‹</button>
+              <h1 id="heading-tutorial" class="screen-title">Accessibility Guide</h1>
+            </div>
+          </header>
+
+          <!-- Step Progress Dots -->
+          <div class="tutorial-progress-bar" id="tutorial-dots-bar" aria-hidden="true">
+            <span class="progress-dot active"></span>
+            <span class="progress-dot"></span>
+            <span class="progress-dot"></span>
+            <span class="progress-dot"></span>
+          </div>
+
+          <div class="tutorial-step-card">
+            <div>
+              <div class="tutorial-step-icon" aria-hidden="true" id="tutorial-icon-box">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="5 9 2 12 5 15"></polyline><polyline points="9 5 12 2 15 5"></polyline><polyline points="15 19 12 22 9 19"></polyline><polyline points="19 9 22 12 19 15"></polyline></svg>
+              </div>
+              <h2 class="heading-hero" style="font-size: 1.5rem;" id="tutorial-step-title">1. Directional Gestures</h2>
+              <p class="text-subtitle" id="tutorial-step-body" style="font-size: 1.05rem;">
+                PALMLOCK replaces numeric touch keys with 4 natural directional swipes: Up, Down, Left, and Right, plus Tap. Each gesture triggers a distinctive haptic frequency.
+              </p>
+            </div>
+
+            <button type="button" class="btn-audio-repeat" id="btn-tutorial-listen" style="margin-top: var(--space-4);">
+              <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path></svg>
+              <span>Listen to Step Explanation</span>
+            </button>
+          </div>
+
+          <div style="display: flex; justify-content: space-between; gap: var(--space-3);">
+            <button type="button" class="btn btn-secondary" id="btn-tutorial-prev" disabled>
+              ‹ Previous
+            </button>
+            <button type="button" class="btn btn-primary" id="btn-tutorial-next">
+              Next Step ›
+            </button>
+          </div>
+        </section>
+
+        <!-- ===================================================================
+             SCREEN 13: GESTURE PRACTICE INTERFACE
+             =================================================================== -->
+        <section id="screen-practice" class="app-screen" aria-labelledby="heading-practice">
+          <header class="screen-header">
+            <div class="screen-header-left">
+              <button type="button" class="btn-header-back" data-back="screen-dashboard" aria-label="Back to Dashboard">‹</button>
+              <h1 id="heading-practice" class="screen-title">Gesture Practice Lab</h1>
+            </div>
+          </header>
+
+          <p class="text-subtitle" style="margin-top: var(--space-2);">
+            Familiarize your fingers with directional swipes. Live tactile and spoken responses confirm your input.
+          </p>
+
+          <div class="practice-feedback-banner" role="status" aria-live="polite">
+            <div style="font-size: var(--font-size-xs); color: var(--text-muted); font-weight: 600;">LAST DETECTED GESTURE</div>
+            <div class="practice-last-detected" id="practice-detected-text">Swipe or Tap Inside Box</div>
+          </div>
+
+          <!-- Practice Touch Canvas -->
+          <div class="gesture-canvas-area" id="practice-gesture-canvas" role="region" aria-label="Gesture practice area. Try swiping up, down, left, right or tap.">
+            <div class="gesture-guide-compass" aria-hidden="true">
+              <div></div><div class="compass-arrow">↑ UP</div><div></div>
+              <div class="compass-arrow">← LEFT</div><div class="compass-center">TAP</div><div class="compass-arrow">RIGHT →</div>
+              <div></div><div class="compass-arrow">↓ DOWN</div><div></div>
+            </div>
+          </div>
+
+          <div class="gesture-controls-row">
+            <button type="button" class="btn btn-secondary" id="btn-practice-reset">
+              Reset Practice Log
+            </button>
+            <button type="button" class="btn btn-primary" id="btn-practice-test-pin">
+              Test Real PIN Flow
+            </button>
+          </div>
+
+          <div class="card">
+            <h2 class="heading-section" style="font-size: 1rem; margin-bottom: var(--space-2);">Gesture Recognition Legend</h2>
+            <ul style="font-size: var(--font-size-sm); color: var(--text-secondary); padding-left: 20px; line-height: 1.8;">
+              <li><strong>Swipe Up:</strong> Single rising pitch tone & 80ms pulse</li>
+              <li><strong>Swipe Down:</strong> Descending pitch tone & 80ms pulse</li>
+              <li><strong>Swipe Left:</strong> Low tone & dual short pulses</li>
+              <li><strong>Swipe Right:</strong> High tone & dual short pulses</li>
+              <li><strong>Center Tap:</strong> Crisp click chime & sharp 40ms tick</li>
+            </ul>
+          </div>
+        </section>
+
+        <!-- ===================================================================
+             SCREEN 14: ACCESSIBILITY SETTINGS
+             =================================================================== -->
+        <section id="screen-settings" class="app-screen" aria-labelledby="heading-settings">
+          <header class="screen-header">
+            <div class="screen-header-left">
+              <button type="button" class="btn-header-back" data-back="screen-dashboard" aria-label="Back to Dashboard">‹</button>
+              <h1 id="heading-settings" class="screen-title">Accessibility Settings</h1>
+            </div>
+          </header>
+
+          <p class="text-subtitle" style="margin-top: var(--space-2);">
+            Configure speech synthesis, haptic cadences, contrast themes, and duress safety triggers.
+          </p>
+
+          <!-- Audio & Speech Settings -->
+          <div class="card">
+            <h2 class="heading-section" style="font-size: 1.1rem;">Speech Synthesis</h2>
+            
+            <div class="toggle-row">
+              <div>
+                <label for="settings-speech-toggle" style="font-weight: 600;">Spoken Prompts</label>
+                <div style="font-size: 0.8rem; color: var(--text-muted);">Speaks action prompts and QR guidance</div>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="settings-speech-toggle" checked>
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+
+            <div class="form-group" style="margin-top: var(--space-3);">
+              <label for="settings-speech-rate" class="form-label">
+                <span>Speech Rate: <span id="speech-rate-label">1.0x</span></span>
+              </label>
+              <input type="range" id="settings-speech-rate" min="0.5" max="2.0" step="0.1" value="1.0" class="form-input" style="padding: 0;">
+            </div>
+          </div>
+
+          <!-- Vibration Settings -->
+          <div class="card">
+            <h2 class="heading-section" style="font-size: 1.1rem;">Tactile Feedback (Haptics)</h2>
+            <div class="toggle-row">
+              <div>
+                <label for="settings-vibrate-toggle" style="font-weight: 600;">Vibration Pulses</label>
+                <div style="font-size: 0.8rem; color: var(--text-muted);">Physical phone vibration on gesture stroke</div>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="settings-vibrate-toggle" checked>
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+          </div>
+
+          <!-- Contrast & Typography -->
+          <div class="card">
+            <h2 class="heading-section" style="font-size: 1.1rem;">Visual & Contrast Modes</h2>
+            <div class="form-group">
+              <label for="settings-theme-select" class="form-label">High-Contrast Theme</label>
+              <select id="settings-theme-select" class="form-select">
+                <option value="default">Default: Deep Obsidian & Amber</option>
+                <option value="yellow-black">High-Contrast: Yellow on Black (AAA)</option>
+                <option value="white-black">High-Contrast: White on Black</option>
+                <option value="light-blue">High-Contrast: Blue on Light</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label for="settings-font-select" class="form-label">Text Sizing</label>
+              <select id="settings-font-select" class="form-select">
+                <option value="standard">Standard (16px base)</option>
+                <option value="large">Large (18px base - +15%)</option>
+                <option value="xlarge">Extra Large (21px base - +30%)</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Duress Emergency Configuration -->
+          <div class="card">
+            <h2 class="heading-section" style="font-size: 1.1rem; color: var(--color-danger);">Emergency & Duress Safety</h2>
+            <p style="font-size: var(--font-size-xs); color: var(--text-muted); margin-bottom: var(--space-3);">
+              The Duress PIN quietly dispatches your emergency coordinates to trusted contacts while appearing as a card decline.
+            </p>
+            <div class="verify-detail-row" style="margin-bottom: var(--space-2);">
+              <span style="color: var(--text-muted);">Current Duress PIN:</span>
+              <span style="font-family: var(--font-family-mono); font-weight: bold; color: var(--color-danger);">DOWN, DOWN, LEFT, LEFT</span>
+            </div>
+            <button type="button" class="btn btn-outline btn-full" id="btn-manage-contacts-from-settings">
+              Manage Trusted Guardians (2 Registered)
+            </button>
+          </div>
+        </section>
+
+      </main>
+
+      <!-- Bottom Accessible Navigation Bar -->
+      <nav class="bottom-nav" aria-label="Primary Application Navigation">
+        <button type="button" class="nav-item active" data-nav="screen-dashboard" aria-label="Home Dashboard">
+          <svg viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>
+          <span>Home</span>
+        </button>
+
+        <button type="button" class="nav-item" data-nav="screen-practice" aria-label="Gesture Practice Lab">
+          <svg viewBox="0 0 24 24"><polyline points="5 9 2 12 5 15"></polyline><polyline points="9 5 12 2 15 5"></polyline><polyline points="15 19 12 22 9 19"></polyline><polyline points="19 9 22 12 19 15"></polyline><line x1="2" y1="12" x2="22" y2="12"></line><line x1="12" y1="2" x2="12" y2="22"></line></svg>
+          <span>Practice</span>
+        </button>
+
+        <button type="button" class="nav-item nav-item-scan" data-nav="screen-scanner" aria-label="Scan QR Code">
+          <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
+          <span class="sr-only">Scan QR</span>
+        </button>
+
+        <button type="button" class="nav-item" data-nav="screen-history" aria-label="Payment History">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+          <span>History</span>
+        </button>
+
+        <button type="button" class="nav-item" data-nav="screen-settings" aria-label="Accessibility Settings">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+          <span>Settings</span>
+        </button>
+      </nav>
+
+    </div><!-- /.app-container -->
+  </div><!-- /.desktop-wrapper -->
+
+  <!-- Modal: Emergency SOS Alert Triggered -->
+  <div id="modal-sos-alert" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="modal-sos-title">
+    <div class="modal-dialog emergency">
+      <div style="display: flex; align-items: center; gap: var(--space-3); margin-bottom: var(--space-3);">
+        <div style="width: 44px; height: 44px; border-radius: 50%; background: var(--color-danger); color: #fff; display: flex; align-items: center; justify-content: center; font-weight: bold;">SOS</div>
+        <div>
+          <h2 id="modal-sos-title" style="font-size: var(--font-size-xl); font-weight: bold; color: var(--color-danger);">Emergency Alert Active</h2>
+          <div style="font-size: var(--font-size-xs); color: var(--text-muted);">Discreet Telemetry Dispatch</div>
+        </div>
+      </div>
+      <p style="font-size: var(--font-size-sm); color: var(--text-primary); margin-bottom: var(--space-4);">
+        Emergency assistance signal triggered. In a live system, high-priority SMS and geolocated alert pings are dispatched to your 2 registered trusted guardians.
+      </p>
+      <div class="result-receipt-box" style="margin-bottom: var(--space-4);">
+        <div class="verify-detail-row">
+          <span style="color: var(--text-muted);">Simulated GPS:</span>
+          <span>37.7749° N, 122.4194° W</span>
+        </div>
+        <div class="verify-detail-row" style="margin-top: 4px;">
+          <span style="color: var(--text-muted);">Recipients:</span>
+          <span>Sarah Lin (Sister), Marcus Vance</span>
+        </div>
+      </div>
+      <button type="button" class="btn btn-secondary btn-full" id="btn-close-sos-modal">
+        Dismiss Alert
+      </button>
+    </div>
+  </div>
+
+  <!-- Modal: Add Trusted Contact -->
+  <div id="modal-add-contact" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="modal-contact-title">
+    <div class="modal-dialog">
+      <h2 id="modal-contact-title" class="heading-section">Add Trusted Guardian</h2>
+      <form id="form-new-contact" novalidate>
+        <div class="form-group">
+          <label for="contact-name-input" class="form-label">Full Name</label>
+          <input type="text" id="contact-name-input" class="form-input" placeholder="e.g. Elena Rostova" required>
+        </div>
+        <div class="form-group">
+          <label for="contact-relationship-input" class="form-label">Relationship</label>
+          <input type="text" id="contact-relationship-input" class="form-input" placeholder="e.g. Sister, Partner, Guardian" required>
+        </div>
+        <div class="form-group">
+          <label for="contact-phone-input" class="form-label">Phone Number</label>
+          <input type="tel" id="contact-phone-input" class="form-input" placeholder="e.g. +1 555-0192" required>
+        </div>
+        <div class="toggle-row" style="margin-bottom: var(--space-4);">
+          <div>
+            <label for="contact-duress-notify" style="font-weight: 600;">Notify on Duress PIN</label>
+            <div style="font-size: 0.8rem; color: var(--text-muted);">Send silent alert if duress sequence entered</div>
+          </div>
+          <label class="toggle-switch">
+            <input type="checkbox" id="contact-duress-notify" checked>
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+        <div style="display: flex; gap: var(--space-3);">
+          <button type="button" class="btn btn-secondary" id="btn-cancel-add-contact" style="flex: 1;">Cancel</button>
+          <button type="submit" class="btn btn-primary" style="flex: 1;">Save Contact</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Application Modular Scripts -->
+  <script type="module" src="js/user/app.js"></script>
+</body>
+</html>

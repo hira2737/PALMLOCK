@@ -1,0 +1,658 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="PALMLOCK — Security Operations & Incident Response Center for Accessibility-Focused QR Payment Security.">
+  <title>PALMLOCK — Security Operations & Incident Response Center</title>
+  
+  <!-- Main SOC Stylesheet -->
+  <link rel="stylesheet" href="css/admin.css">
+
+  <!-- Leaflet.js for Interactive Geographic Incident Telemetry Map -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+</head>
+<body>
+
+  <!-- Accessible Skip Navigation -->
+  <a href="#admin-main" class="sr-only">Skip to main dashboard</a>
+  <div id="admin-aria-live" class="sr-only" aria-live="polite" aria-atomic="true"></div>
+
+  <div class="admin-layout">
+
+    <!-- ===================================================================
+         SIDEBAR NAVIGATION
+         =================================================================== -->
+    <aside class="admin-sidebar" role="navigation" aria-label="Main Admin Navigation">
+      <!-- Brand & Operations Identity -->
+      <div class="sidebar-brand-box">
+        <div class="brand-wrapper">
+          <div class="brand-shield-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+            </svg>
+          </div>
+          <div class="brand-text-block">
+            <span class="brand-title">PALMLOCK</span>
+            <span class="brand-subtitle">Security Operations</span>
+          </div>
+        </div>
+        <button type="button" id="btn-toggle-sidebar" class="btn-sidebar-collapse" aria-label="Toggle sidebar width" title="Collapse / Expand Sidebar">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"></polyline></svg>
+        </button>
+      </div>
+
+      <!-- Nav Links -->
+      <nav class="sidebar-nav">
+        <div class="nav-section-title">Operations Command</div>
+        
+        <button type="button" class="sidebar-nav-link active" data-view="section-overview" aria-current="page">
+          <div class="nav-link-content">
+            <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
+            <span>Overview</span>
+          </div>
+        </button>
+
+        <button type="button" class="sidebar-nav-link" data-view="section-alerts">
+          <div class="nav-link-content">
+            <svg viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+            <span>Emergency Alerts</span>
+          </div>
+          <span class="sidebar-badge alarm" id="badge-active-alerts">2</span>
+        </button>
+
+        <button type="button" class="sidebar-nav-link" data-view="section-incident-details">
+          <div class="nav-link-content">
+            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+            <span>Incident Details</span>
+          </div>
+        </button>
+
+        <div class="nav-section-title">Directory & Ledgers</div>
+
+        <button type="button" class="sidebar-nav-link" data-view="section-users">
+          <div class="nav-link-content">
+            <svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
+            <span>User Management</span>
+          </div>
+        </button>
+
+        <button type="button" class="sidebar-nav-link" data-view="section-transactions">
+          <div class="nav-link-content">
+            <svg viewBox="0 0 24 24"><line x1="12" y1="1" x2="12" y2="23"></line><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>
+            <span>Transactions</span>
+          </div>
+        </button>
+
+        <div class="nav-section-title">Cross-Interface Links</div>
+
+        <a href="index.html" target="_blank" class="sidebar-nav-link" rel="noopener noreferrer" style="color: var(--admin-color-info-light);">
+          <div class="nav-link-content">
+            <svg viewBox="0 0 24 24"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
+            <span>Mobile User App ↗</span>
+          </div>
+        </a>
+      </nav>
+
+      <!-- Sidebar Footer User Profile -->
+      <div class="sidebar-footer">
+        <div class="admin-avatar">SC</div>
+        <div class="admin-user-info">
+          <div class="admin-user-name">Officer S. Chen</div>
+          <div class="admin-user-role">
+            <span class="role-online-dot"></span>
+            <span>Incident Lead</span>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- ===================================================================
+         MAIN CONTAINER (TOPBAR + WORKSPACE)
+         =================================================================== -->
+    <div class="admin-main-container">
+
+      <!-- Top Operations Bar -->
+      <header class="admin-topbar" role="banner">
+        <div class="topbar-left">
+          <div class="system-status-indicator" title="Demonstration mode: WebSocket and SMS delivery simulated">
+            <span class="status-pulse-dot" aria-hidden="true"></span>
+            <span>SYSTEM OPERATIONAL (SIMULATED)</span>
+          </div>
+
+          <!-- Global Search -->
+          <div class="global-search-box">
+            <span class="search-icon-slot" aria-hidden="true">🔍</span>
+            <input type="search" id="admin-global-search" class="search-input" placeholder="Search alerts, users, or transactions..." aria-label="Global Admin Search">
+            <span class="search-kbd-chip">Ctrl+K</span>
+          </div>
+        </div>
+
+        <div class="topbar-right">
+          <!-- Audio Siren Alert Toggle -->
+          <button type="button" id="btn-toggle-siren-audio" class="btn btn-topbar btn-audio-mute" aria-pressed="false" title="Audio Siren Alerts Enabled">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path></svg>
+            <span id="siren-status-label">Alert Siren: On</span>
+          </button>
+
+          <!-- Simulate Live Duress Alert (Test Utility) -->
+          <button type="button" id="btn-simulate-duress-event" class="btn btn-topbar btn-simulate-alert" title="Simulate a real-time incoming duress event">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path></svg>
+            <span>+ Simulate Duress Alert</span>
+          </button>
+
+          <a href="index.html" target="_blank" class="btn btn-topbar btn-user-app-link" title="Open Mobile User App in new tab">
+            User App ↗
+          </a>
+        </div>
+      </header>
+
+      <!-- Main Workspace Container -->
+      <main id="admin-main" class="admin-workspace" tabindex="-1">
+
+        <!-- ===============================================================
+             SECTION 1: OVERVIEW DASHBOARD
+             =============================================================== -->
+        <section id="section-overview" class="admin-view active" aria-labelledby="heading-overview">
+          <div class="view-header-row">
+            <div class="view-title-group">
+              <h1 id="heading-overview">Security Operations Overview</h1>
+              <p class="view-description">Real-time emergency telemetry, incident response management, and payment security metrics.</p>
+            </div>
+            <div class="demo-disclaimer-banner" role="note">
+              <span><strong>Notice:</strong> Demonstration telemetry active. Database persistence and cellular SMS dispatch occur in backend phases.</span>
+            </div>
+          </div>
+
+          <!-- 4 Core KPI Metrics -->
+          <div class="metrics-kpi-grid">
+            <div class="kpi-card critical">
+              <div class="kpi-card-header">
+                <span>Active Emergency Alerts</span>
+                <span class="status-pill critical" id="kpi-alerts-badge">Active</span>
+              </div>
+              <div class="kpi-card-value" id="kpi-active-alerts-count">2</div>
+              <div class="kpi-card-subtext" style="color: var(--admin-color-critical);">
+                Requires immediate operator triage
+              </div>
+            </div>
+
+            <div class="kpi-card info">
+              <div class="kpi-card-header">
+                <span>Total Monitored Users</span>
+                <span class="status-pill info">Active Directory</span>
+              </div>
+              <div class="kpi-card-value" id="kpi-total-users-count">1,248</div>
+              <div class="kpi-card-subtext">
+                Visually impaired & low-vision accounts
+              </div>
+            </div>
+
+            <div class="kpi-card success">
+              <div class="kpi-card-header">
+                <span>Total Transactions</span>
+                <span class="status-pill success">99.8% Safe</span>
+              </div>
+              <div class="kpi-card-value" id="kpi-total-tx-volume">$42,910.25</div>
+              <div class="kpi-card-subtext">
+                3,412 contactless QR payments evaluated
+              </div>
+            </div>
+
+            <div class="kpi-card warning">
+              <div class="kpi-card-header">
+                <span>Resolved Incidents</span>
+                <span class="status-pill success">All Clear</span>
+              </div>
+              <div class="kpi-card-value" id="kpi-resolved-incidents-count">18</div>
+              <div class="kpi-card-subtext">
+                Avg. response resolution: <strong>2.1 mins</strong>
+              </div>
+            </div>
+          </div>
+
+          <!-- Overview Two-Column Workstation -->
+          <div class="incident-layout-grid">
+            <!-- Left: High Priority Alerts Feed -->
+            <div class="panel-card">
+              <div class="panel-card-header">
+                <div class="panel-card-title">
+                  <span style="color: var(--admin-color-critical);">●</span>
+                  <span>Active & Pending Emergency Incidents</span>
+                </div>
+                <button type="button" class="btn btn-secondary btn-sm" id="btn-goto-alerts-tab">View All Alerts ›</button>
+              </div>
+
+              <div id="overview-active-alerts-feed" class="incident-feed-container">
+                <!-- Dynamically populated from JS -->
+              </div>
+            </div>
+
+            <!-- Right: Severity Distribution & System Activity -->
+            <div style="display: flex; flex-direction: column; gap: var(--space-4);">
+              <!-- Alert Severity Distribution -->
+              <div class="panel-card">
+                <div class="panel-card-header">
+                  <div class="panel-card-title">Alert Severity Distribution</div>
+                </div>
+                <div>
+                  <div class="severity-bar-container" id="overview-severity-bar">
+                    <div class="severity-bar-segment critical" style="width: 25%;" title="Critical (Duress PIN): 2"></div>
+                    <div class="severity-bar-segment warning" style="width: 35%;" title="High (Manual SOS): 3"></div>
+                    <div class="severity-bar-segment info" style="width: 40%;" title="Medium (POS Anomaly): 4"></div>
+                  </div>
+                  <div class="severity-legend">
+                    <span class="legend-item"><span class="legend-color-dot critical"></span> Critical Duress (2)</span>
+                    <span class="legend-item"><span class="legend-color-dot warning"></span> High SOS (3)</span>
+                    <span class="legend-item"><span class="legend-color-dot info"></span> Medium Anomaly (4)</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Recent Activity Stream -->
+              <div class="panel-card">
+                <div class="panel-card-header">
+                  <div class="panel-card-title">Recent System Activity</div>
+                </div>
+                <div id="overview-activity-stream" class="incident-timeline">
+                  <!-- Dynamically populated from JS -->
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ===============================================================
+             SECTION 2: EMERGENCY ALERTS
+             =============================================================== -->
+        <section id="section-alerts" class="admin-view" aria-labelledby="heading-alerts">
+          <div class="view-header-row">
+            <div class="view-title-group">
+              <h1 id="heading-alerts">Emergency Alerts & Duress Intercepts</h1>
+              <p class="view-description">Monitor, triage, and dispatch assistance for visually impaired users in duress.</p>
+            </div>
+          </div>
+
+          <div class="table-panel-card">
+            <!-- Table Filter Bar -->
+            <div class="table-controls-bar">
+              <div class="table-filter-group">
+                <label for="filter-alert-status" class="sr-only">Filter by Status</label>
+                <select id="filter-alert-status" class="table-select">
+                  <option value="all">All Statuses (Active, Acknowledged, Escalated, Resolved)</option>
+                  <option value="active" selected>Active & In-Progress Only</option>
+                  <option value="escalated">Escalated Only</option>
+                  <option value="resolved">Resolved Only</option>
+                </select>
+
+                <label for="filter-alert-severity" class="sr-only">Filter by Severity</label>
+                <select id="filter-alert-severity" class="table-select">
+                  <option value="all">All Severities</option>
+                  <option value="critical">Critical (Duress PIN)</option>
+                  <option value="high">High (SOS Manual)</option>
+                  <option value="medium">Medium (POS Anomaly)</option>
+                </select>
+              </div>
+
+              <div style="font-size: var(--font-size-xs); color: var(--admin-text-muted);">
+                Showing <span id="alerts-filtered-count">0</span> emergency incident records
+              </div>
+            </div>
+
+            <!-- Alerts Table -->
+            <div class="table-responsive-wrapper">
+              <table class="admin-data-table" aria-label="Emergency Alerts Registry">
+                <thead>
+                  <tr>
+                    <th>Alert ID</th>
+                    <th>Severity</th>
+                    <th>Emergency Type</th>
+                    <th>User & Impairment</th>
+                    <th>Date / Time</th>
+                    <th>Location & Coordinates</th>
+                    <th>Guardian Contact Status</th>
+                    <th>Network Status</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="table-alerts-body">
+                  <!-- Dynamically populated from JS -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- ===============================================================
+             SECTION 3: INCIDENT DETAILS & RESPONSE MANAGEMENT
+             =============================================================== -->
+        <section id="section-incident-details" class="admin-view" aria-labelledby="heading-incident-details">
+          <div class="view-header-row">
+            <div class="view-title-group">
+              <h1 id="heading-incident-details">Incident Details & Emergency Dispatch</h1>
+              <p class="view-description">Detailed forensic investigation, interactive telemetry tracking, and operator response controls.</p>
+            </div>
+            <div style="display: flex; gap: var(--space-2);">
+              <button type="button" class="btn btn-secondary btn-sm" id="btn-back-to-alerts">‹ Back to Alerts</button>
+            </div>
+          </div>
+
+          <div class="incident-layout-grid">
+            <!-- Left Column: Incident Dossier & Interactive Map -->
+            <div style="display: flex; flex-direction: column; gap: var(--space-4);">
+              
+              <!-- Incident Header Info Card -->
+              <div class="panel-card" id="incident-dossier-card">
+                <div class="incident-header-row">
+                  <div style="display: flex; align-items: center; gap: var(--space-3);">
+                    <span id="detail-incident-badge" class="incident-type-badge critical">Critical Duress</span>
+                    <span id="detail-incident-id" class="incident-id-tag">ALT-2026-8921</span>
+                  </div>
+                  <span id="detail-incident-status-pill" class="status-pill critical">Status: Active</span>
+                </div>
+
+                <div class="incident-details-grid">
+                  <div class="incident-detail-item">
+                    <span class="detail-label">User Name</span>
+                    <span class="detail-value" id="detail-user-name">Maya Lin</span>
+                    <span class="detail-sub" id="detail-user-tier">Totally Blind (Screen Reader)</span>
+                  </div>
+
+                  <div class="incident-detail-item">
+                    <span class="detail-label">User Phone</span>
+                    <span class="detail-value" id="detail-user-phone">+1 (555) 019-2834</span>
+                    <span class="detail-sub">Carrier: T-Mobile 5G</span>
+                  </div>
+
+                  <div class="incident-detail-item">
+                    <span class="detail-label">Timestamp</span>
+                    <span class="detail-value" id="detail-timestamp">Nov 11, 2026, 15:42:10</span>
+                    <span class="detail-sub" id="detail-time-elapsed">Just now</span>
+                  </div>
+
+                  <div class="incident-detail-item">
+                    <span class="detail-label">Associated Merchant</span>
+                    <span class="detail-value" id="detail-merchant">City Metro Transit</span>
+                    <span class="detail-sub">Amount: $4.50 (POS #104)</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Location & Interactive Leaflet Map Panel -->
+              <div class="panel-card incident-map-card">
+                <div class="panel-card-header">
+                  <div class="panel-card-title">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg>
+                    <span>Geolocated Telemetry & Transit Proximity</span>
+                  </div>
+                  <span class="status-pill info" id="detail-gps-coords">37.7749° N, 122.4194° W</span>
+                </div>
+
+                <div class="map-card-body">
+                  <div class="incident-address-callout" id="detail-address-text">
+                    📍 <strong>Street Address:</strong> 4th & Market St Metro Station, Platform 2 (San Francisco, CA)
+                  </div>
+
+                  <!-- Real Interactive Leaflet Geographic Map Container -->
+                  <div id="incident-map" class="interactive-leaflet-map" role="region" aria-label="Interactive Incident Telemetry Map"></div>
+
+                  <!-- Accessible High-Contrast Fallback (Rendered if offline / tile server unreachable) -->
+                  <div id="incident-map-fallback" class="map-viewport-panel" style="display: none;" role="region" aria-label="Simulated Emergency Telemetry Map">
+                    <div class="map-grid-overlay"></div>
+                    <div class="map-marker" style="top: 50%; left: 50%;">
+                      <div class="marker-pulse-ring critical"></div>
+                      <div class="marker-core-dot critical">!</div>
+                      <div class="marker-tag-callout" id="map-marker-label">Maya Lin (Duress Trigger)</div>
+                    </div>
+                    <div class="map-watermark-label">PALMLOCK Simulated GIS Engine • Demonstration Coordinates Fixed</div>
+                  </div>
+
+                  <div class="map-footer-note">
+                    <span class="map-live-dot">●</span> <strong>Demonstration Coordinates:</strong> Fixed telemetry record. Real-time GPS tracking connects in later backend phases.
+                  </div>
+                </div>
+              </div>
+
+              <!-- Emergency Guardian Notification Status -->
+              <div class="panel-card">
+                <div class="panel-card-header">
+                  <div class="panel-card-title">
+                    <span>Emergency Guardians Notification Status</span>
+                  </div>
+                </div>
+
+                <div id="detail-guardians-list" style="display: flex; flex-direction: column; gap: var(--space-2);">
+                  <!-- Populated from JS -->
+                </div>
+              </div>
+
+            </div>
+
+            <!-- Right Column: Response Management & Incident Timeline -->
+            <div style="display: flex; flex-direction: column; gap: var(--space-4);">
+
+              <!-- Response Action Center -->
+              <div class="panel-card" style="border: 2px solid var(--admin-color-critical); box-shadow: var(--shadow-glow-critical);">
+                <div class="panel-card-header">
+                  <div class="panel-card-title" style="color: var(--admin-color-critical);">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+                    <span>Response Management Command</span>
+                  </div>
+                </div>
+
+                <p style="font-size: 0.78rem; color: var(--admin-text-secondary);">
+                  Update incident status. Actions immediately update this demonstration interface and log audit trails.
+                </p>
+
+                <div style="display: flex; flex-direction: column; gap: var(--space-2);">
+                  <button type="button" class="btn btn-secondary btn-full" id="btn-action-acknowledge">
+                    ✓ Acknowledge Alert (Take Ownership)
+                  </button>
+
+                  <button type="button" class="btn btn-critical btn-full" id="btn-action-escalate">
+                    ⚠ Escalate Incident (Dispatch First Responders)
+                  </button>
+
+                  <button type="button" class="btn btn-success btn-full" id="btn-action-resolve">
+                    ✔ Resolve Incident (Mark Safe)
+                  </button>
+                </div>
+              </div>
+
+              <!-- Incident Timeline -->
+              <div class="panel-card">
+                <div class="panel-card-header">
+                  <div class="panel-card-title">Incident Audit Timeline</div>
+                </div>
+
+                <div id="detail-incident-timeline" class="incident-timeline">
+                  <!-- Populated from JS -->
+                </div>
+              </div>
+
+              <!-- Response Notes -->
+              <div class="panel-card">
+                <div class="panel-card-header">
+                  <div class="panel-card-title">Operator Response Notes</div>
+                </div>
+
+                <!-- Notes Feed -->
+                <div class="notes-feed-list" id="detail-notes-list">
+                  <!-- Populated from JS -->
+                </div>
+
+                <!-- Add Note Form -->
+                <form id="form-add-response-note" style="display: flex; flex-direction: column; gap: var(--space-2); margin-top: var(--space-2);">
+                  <label for="response-note-input" class="sr-only">Add Response Note</label>
+                  <textarea id="response-note-input" class="form-input" rows="2" placeholder="Add operator response note..." required style="background: var(--admin-bg-elevated); border: 1px solid var(--admin-border-medium); color: #fff; padding: 8px 12px; border-radius: var(--radius-md); font-family: inherit; font-size: 0.82rem;"></textarea>
+                  <button type="submit" class="btn btn-primary btn-sm" style="align-self: flex-end;">+ Add Note</button>
+                </form>
+              </div>
+
+            </div>
+          </div>
+        </section>
+
+        <!-- ===============================================================
+             SECTION 4: USER MANAGEMENT
+             =============================================================== -->
+        <section id="section-users" class="admin-view" aria-labelledby="heading-users">
+          <div class="view-header-row">
+            <div class="view-title-group">
+              <h1 id="heading-users">User Directory & Accessibility Profiles</h1>
+              <p class="view-description">Registered visually impaired individuals, safety tiers, and emergency guardians.</p>
+            </div>
+          </div>
+
+          <div class="table-panel-card">
+            <!-- Table Controls -->
+            <div class="table-controls-bar">
+              <div class="table-filter-group">
+                <label for="filter-user-impairment" class="sr-only">Filter by Impairment Level</label>
+                <select id="filter-user-impairment" class="table-select">
+                  <option value="all">All Impairment Levels</option>
+                  <option value="total">Totally Blind</option>
+                  <option value="low-vision">Low Vision</option>
+                  <option value="legally-blind">Legally Blind</option>
+                  <option value="sighted-tester">Sighted Tester</option>
+                </select>
+
+                <label for="filter-user-status" class="sr-only">Filter by Account Status</label>
+                <select id="filter-user-status" class="table-select">
+                  <option value="all">All Account Statuses</option>
+                  <option value="active">Active & Verified</option>
+                  <option value="flagged">Flagged / Duress Intercepted</option>
+                </select>
+              </div>
+
+              <div style="font-size: var(--font-size-xs); color: var(--admin-text-muted);">
+                Showing <span id="users-filtered-count">0</span> registered users
+              </div>
+            </div>
+
+            <!-- Users Table -->
+            <div class="table-responsive-wrapper">
+              <table class="admin-data-table" aria-label="Users Directory">
+                <thead>
+                  <tr>
+                    <th>User ID</th>
+                    <th>Full Name</th>
+                    <th>Visual Impairment Tier</th>
+                    <th>Phone</th>
+                    <th>Trusted Guardians</th>
+                    <th>Active Balance</th>
+                    <th>Account Status</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="table-users-body">
+                  <!-- Populated from JS -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- ===============================================================
+             SECTION 5: TRANSACTIONS AUDIT
+             =============================================================== -->
+        <section id="section-transactions" class="admin-view" aria-labelledby="heading-transactions">
+          <div class="view-header-row">
+            <div class="view-title-group">
+              <h1 id="heading-transactions">Transaction Security Audit Ledger</h1>
+              <p class="view-description">Review QR-based transactions, cryptographic verification, and intercepted duress events.</p>
+            </div>
+          </div>
+
+          <div class="table-panel-card">
+            <!-- Table Controls -->
+            <div class="table-controls-bar">
+              <div class="table-filter-group">
+                <label for="filter-tx-status" class="sr-only">Filter Transactions</label>
+                <select id="filter-tx-status" class="table-select">
+                  <option value="all">All Transaction Results</option>
+                  <option value="completed">Completed Safe Payments</option>
+                  <option value="duress">Duress PIN Intercepted</option>
+                </select>
+              </div>
+
+              <div style="font-size: var(--font-size-xs); color: var(--admin-text-muted);">
+                Showing <span id="tx-filtered-count">0</span> transaction audit entries
+              </div>
+            </div>
+
+            <!-- Transactions Table -->
+            <div class="table-responsive-wrapper">
+              <table class="admin-data-table" aria-label="Transactions Ledger">
+                <thead>
+                  <tr>
+                    <th>Reference ID</th>
+                    <th>Date / Time</th>
+                    <th>User</th>
+                    <th>Merchant</th>
+                    <th>Category</th>
+                    <th>Amount</th>
+                    <th>Security Check / Status</th>
+                    <th>Details</th>
+                  </tr>
+                </thead>
+                <tbody id="table-tx-body">
+                  <!-- Populated from JS -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+      </main>
+    </div><!-- /.admin-main-container -->
+  </div><!-- /.admin-layout -->
+
+  <!-- ===================================================================
+       MODAL: USER PROFILE & ACCESSIBILITY DETAILS
+       =================================================================== -->
+  <div id="modal-user-profile" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="modal-user-title">
+    <div class="modal-container">
+      <div class="modal-header">
+        <h2 id="modal-user-title" class="modal-title">User Accessibility Profile</h2>
+        <button type="button" class="btn btn-secondary btn-sm" id="btn-close-user-modal">✕</button>
+      </div>
+      <div class="modal-body" id="modal-user-body">
+        <!-- Dynamically populated from JS -->
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" id="btn-dismiss-user-modal">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================================================================
+       MODAL: ESCALATE INCIDENT CONFIRMATION
+       =================================================================== -->
+  <div id="modal-escalate" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="modal-escalate-title">
+    <div class="modal-container">
+      <div class="modal-header" style="background: rgba(244, 63, 94, 0.15); border-bottom-color: var(--admin-color-critical);">
+        <h2 id="modal-escalate-title" class="modal-title" style="color: var(--admin-color-critical);">⚠ Confirm Incident Escalation</h2>
+        <button type="button" class="btn btn-secondary btn-sm" id="btn-close-escalate-modal">✕</button>
+      </div>
+      <div class="modal-body">
+        <p style="font-size: var(--font-size-sm); color: var(--admin-text-primary);">
+          You are escalating this emergency incident to <strong>Tier 2 High-Priority Response & Transit Patrol Dispatch</strong>.
+        </p>
+        <div class="form-field">
+          <label for="escalate-reason-input">Escalation Justification & Dispatch Channel</label>
+          <input type="text" id="escalate-reason-input" class="form-input" placeholder="e.g. Coercion suspected; transit security officer dispatched to platform." value="Coercion suspected; transit security officer dispatched to platform.">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" id="btn-cancel-escalate">Cancel</button>
+        <button type="button" class="btn btn-critical" id="btn-confirm-escalate">Confirm & Escalate</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Main Modular Admin Scripts -->
+  <script type="module" src="js/admin/admin.js"></script>
+</body>
+</html>
