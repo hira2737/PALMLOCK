@@ -10,6 +10,8 @@ import { initAlertsSection, renderAlertsTable } from './alerts.js';
 import { initIncidentDetailsSection, renderSelectedIncidentDetails, invalidateMapSize } from './incident_details.js';
 import { initUsersSection, renderUsersTable } from './users.js';
 import { initTransactionsSection, renderTransactionsTable } from './transactions.js';
+import { renderAllIncidentMarkers } from './map.js';
+import { TUTORIAL_LESSONS } from '../user/tutorial.js';
 
 document.addEventListener('DOMContentLoaded', () => {
   initNavigation();
@@ -17,6 +19,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initSimulationControls();
   initAudioControls();
   initKeyboardShortcuts();
+  initCrossTabSync();
 
   // Initialize all section modules
   renderOverview();
@@ -24,6 +27,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initIncidentDetailsSection();
   initUsersSection();
   initTransactionsSection();
+  initNewSections();
 
   console.info('PALMLOCK Desktop Security Operations Center (SOC) initialized.');
 });
@@ -109,6 +113,18 @@ export function switchToView(viewId) {
     renderUsersTable();
   } else if (viewId === 'section-transactions') {
     renderTransactionsTable();
+  } else if (viewId === 'section-trusted-contacts') {
+    renderTrustedContactsSection();
+  } else if (viewId === 'section-location-monitoring') {
+    renderLocationMonitoringSection();
+  } else if (viewId === 'section-escalation-history') {
+    renderEscalationHistorySection();
+  } else if (viewId === 'section-false-alarm-records') {
+    renderFalseAlarmSection();
+  } else if (viewId === 'section-tutorial-management') {
+    renderTutorialAdminSection();
+  } else if (viewId === 'section-settings') {
+    renderSettingsSection();
   }
 
   // Focus heading for accessibility
@@ -268,5 +284,275 @@ export function announceAdminEvent(message) {
     setTimeout(() => {
       el.textContent = message;
     }, 50);
+  }
+}
+
+/**
+ * Initialize Filters and Actions for New Sections
+ */
+function initNewSections() {
+  const contactFilter = document.getElementById('filter-contacts-status');
+  if (contactFilter) {
+    contactFilter.addEventListener('change', (e) => {
+      renderTrustedContactsSection(e.target.value);
+    });
+  }
+
+  const resetBtn = document.getElementById('btn-reset-demo-data');
+  if (resetBtn) {
+    resetBtn.addEventListener('click', () => {
+      localStorage.removeItem('palmlock_all_incidents');
+      localStorage.removeItem('palmlock_latest_incident');
+      localStorage.removeItem('palmlock_false_alarms');
+      alert('Demonstration local storage reset successfully.');
+      location.reload();
+    });
+  }
+
+  // Window global hook for map popup buttons
+  window.viewIncidentFromMap = (id) => {
+    openIncidentDetails(id);
+  };
+}
+
+/**
+ * Section 6: Render Trusted Contacts
+ */
+export function renderTrustedContactsSection(filter = 'all') {
+  const tbody = document.getElementById('table-contacts-body');
+  const countEl = document.getElementById('contacts-filtered-count');
+  if (!tbody) return;
+
+  const contacts = adminState.trustedContacts || [];
+  const filtered = contacts.filter(c => {
+    if (filter === 'verified') return c.verificationStatus === 'verified';
+    if (filter === 'pending') return c.verificationStatus === 'pending';
+    return true;
+  });
+
+  if (countEl) countEl.textContent = filtered.length;
+  tbody.innerHTML = '';
+
+  filtered.forEach(c => {
+    const tr = document.createElement('tr');
+    const isV = c.verificationStatus === 'verified';
+    tr.innerHTML = `
+      <td><strong>${c.name}</strong></td>
+      <td>${c.user}</td>
+      <td>${c.relationship}</td>
+      <td style="font-family: var(--font-family-mono);">${c.phone}</td>
+      <td>
+        <span class="status-pill ${c.isPrimary ? 'critical' : 'info'}">
+          ${c.isPrimary ? 'PRIMARY' : 'SECONDARY'}
+        </span>
+      </td>
+      <td>
+        <span class="status-pill ${isV ? 'success' : 'warning'}">
+          ${isV ? 'Verified' : 'OTP Pending'}
+        </span>
+      </td>
+      <td><span class="status-pill info">${(c.notificationStatus || 'DELIVERED').toUpperCase()}</span></td>
+      <td>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="alert('Guardian dispatch channel test signal sent to ${c.phone}')">
+          Ping Guardian
+        </button>
+      </td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+/**
+ * Section 7: Render Location Monitoring
+ */
+export function renderLocationMonitoringSection() {
+  const feed = document.getElementById('location-telemetry-feed');
+  if (feed) {
+    feed.innerHTML = '';
+    adminState.incidents.forEach(inc => {
+      const card = document.createElement('div');
+      card.className = 'activity-item-compact';
+      card.style.cssText = 'padding: 8px; border: 1px solid var(--admin-border-subtle); border-radius: 6px; cursor: pointer;';
+      card.innerHTML = `
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <strong style="color: var(--admin-color-critical);">${inc.id}</strong>
+          <span class="status-pill ${inc.severity === 'critical' ? 'critical' : 'warning'}">${inc.severity.toUpperCase()}</span>
+        </div>
+        <div style="font-size: 11px; margin-top: 2px;">${inc.userName} • ${inc.merchant || 'General Transit'}</div>
+        <div style="font-size: 10px; color: var(--admin-text-muted); font-family: var(--font-family-mono); margin-top: 2px;">
+          ${inc.gps} (±15m)
+        </div>
+      `;
+      card.onclick = () => {
+        openIncidentDetails(inc.id);
+      };
+      feed.appendChild(card);
+    });
+  }
+
+  // Render multi-marker interactive map
+  setTimeout(() => {
+    try {
+      renderAllIncidentMarkers(adminState.incidents, 'location-monitoring-map');
+    } catch (e) {
+      console.warn('Location monitoring map load error:', e);
+    }
+  }, 100);
+}
+
+/**
+ * Section 8: Render Escalation History
+ */
+export function renderEscalationHistorySection() {
+  const tbody = document.getElementById('table-escalation-body');
+  if (!tbody) return;
+
+  tbody.innerHTML = '';
+  const escalations = adminState.escalations || [];
+
+  escalations.forEach(esc => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><strong style="color: var(--admin-color-critical);">${esc.incidentId}</strong></td>
+      <td>${esc.user}</td>
+      <td><span class="status-pill info">${esc.tier}</span></td>
+      <td><span class="status-pill success">${esc.primaryAck}</span></td>
+      <td><span class="status-pill ${esc.secondaryAck.includes('Acknowledged') ? 'success' : 'info'}">${esc.secondaryAck}</span></td>
+      <td style="font-family: var(--font-family-mono);">${esc.elapsedTime}</td>
+      <td><span class="status-pill ${esc.status === 'Resolved' ? 'success' : 'critical'}">${esc.status}</span></td>
+      <td>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="window.viewIncidentFromMap('${esc.incidentId}')">
+          View Incident
+        </button>
+      </td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+/**
+ * Section 9: Render False Alarm Records
+ */
+export function renderFalseAlarmSection() {
+  const tbody = document.getElementById('table-false-alarm-body');
+  if (!tbody) return;
+
+  tbody.innerHTML = '';
+  const alarms = adminState.falseAlarms || [];
+
+  alarms.forEach(fa => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><strong>${fa.incidentId}</strong></td>
+      <td>${fa.user}</td>
+      <td><span class="status-pill warning">${fa.alertType}</span></td>
+      <td>${fa.cancelledAt}</td>
+      <td style="max-width: 280px; font-size: 11px;">"${fa.reason}"</td>
+      <td><span class="status-pill success">${fa.reviewStatus}</span></td>
+      <td>${fa.reviewingOfficer}</td>
+      <td>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="alert('Officer resolution confirmed for ${fa.incidentId}')">
+          Verify & Close
+        </button>
+      </td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+/**
+ * Section 10: Render Tutorial Management
+ */
+export function renderTutorialAdminSection() {
+  const tbody = document.getElementById('table-tutorial-admin-body');
+  if (!tbody) return;
+
+  tbody.innerHTML = '';
+  const lessons = TUTORIAL_LESSONS || [];
+
+  lessons.forEach((les, idx) => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><strong>${idx + 1}</strong></td>
+      <td><strong>${les.title}</strong></td>
+      <td><span class="status-pill info">${les.category}</span></td>
+      <td style="max-width: 300px; font-size: 11px; color: var(--admin-text-secondary);">${les.body.slice(0, 85)}...</td>
+      <td><span class="status-pill info">Polished Audio & Visual</span></td>
+      <td><span class="status-pill success">Active</span></td>
+      <td>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="alert('Previewing Lesson ${idx + 1}: ${les.title}')">
+          Preview
+        </button>
+      </td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+/**
+ * Section 11: Render Settings Section
+ */
+export function renderSettingsSection() {
+  // Static controls loaded in HTML
+}
+
+/**
+ * Cross-Tab Broadcast Channel Sync
+ * Receives emergency alerts in real-time when triggered in mobile tab!
+ */
+function initCrossTabSync() {
+  if (typeof BroadcastChannel === 'undefined') return;
+
+  try {
+    const bc = new BroadcastChannel('palmlock_soc_channel');
+    bc.onmessage = (event) => {
+      const { type, incident, record } = event.data;
+
+      if ((type === 'NEW_EMERGENCY_INCIDENT' || type === 'INCIDENT_SYNCED_FROM_OFFLINE') && incident) {
+        // Prepend to incidents list if not already present
+        if (!adminState.incidents.some(i => i.id === incident.id)) {
+          adminState.incidents.unshift(incident);
+        } else {
+          // Update existing incident
+          const idx = adminState.incidents.findIndex(i => i.id === incident.id);
+          if (idx !== -1) adminState.incidents[idx] = incident;
+        }
+
+        // Update active alerts count badge
+        const badge = document.getElementById('badge-active-alerts');
+        if (badge) {
+          badge.textContent = adminState.incidents.filter(i => i.status !== 'resolved').length;
+        }
+
+        // Trigger Audio Siren if enabled
+        if (adminState.sirenAudioEnabled) {
+          playEmergencySiren();
+        }
+
+        // Announce
+        announceAdminEvent(`PRIORITY ALERT: New emergency incident ${incident.id} received from ${incident.userName}!`);
+
+        // Re-render overview & alerts
+        renderOverview();
+        renderAlertsTable();
+      }
+
+      if (type === 'FALSE_ALARM_REPORTED' && record) {
+        adminState.falseAlarms.unshift({
+          id: `FA-${Date.now()}`,
+          incidentId: record.incidentId,
+          user: record.user,
+          alertType: 'SOS / Duress Trigger',
+          cancelledAt: record.cancelledAt,
+          reason: record.reason,
+          reviewStatus: 'Pending Review',
+          reviewingOfficer: 'Officer K. Ramanathan',
+          notes: 'User reported false alarm from mobile application.'
+        });
+        renderFalseAlarmSection();
+      }
+    };
+  } catch (e) {
+    console.info('BroadcastChannel cross-tab listener warning:', e);
   }
 }

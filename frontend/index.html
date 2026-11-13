@@ -290,13 +290,16 @@
           <div class="balance-card">
             <div style="display: flex; justify-content: space-between; align-items: center;">
               <span style="font-size: var(--font-size-sm); color: var(--text-muted); font-weight: 600;">ACTIVE WALLET BALANCE</span>
-              <span class="history-badge success">Verified Safe</span>
+              <div style="display: flex; gap: 6px; align-items: center;">
+                <span id="network-status-indicator" class="history-badge success">Online</span>
+                <span id="offline-queue-badge" class="history-badge duress" style="display: none;">0 queued</span>
+              </div>
             </div>
-            <div class="balance-amount" id="dashboard-balance" aria-label="Active Balance: 1,420 dollars and 50 cents">
-              $1,420.50
+            <div class="balance-amount" id="dashboard-balance" aria-label="Active Balance: 1,420 Rupees and 50 Paise">
+              ₹1,420.50
             </div>
             <div style="font-size: var(--font-size-xs); color: var(--text-secondary);">
-              Linked Account: Chase Premier Checking (••4902)
+              Linked Account: State Bank of India (Premier DigiAccount ••7824)
             </div>
           </div>
 
@@ -402,17 +405,29 @@
 
           <!-- Simulated Payloads for Testing -->
           <div class="card">
-            <h2 class="heading-section" style="font-size: 1rem; margin-bottom: var(--space-2);">Test Demonstration Codes</h2>
+            <h2 class="heading-section" style="font-size: 1rem; margin-bottom: var(--space-2);">Test Certified Indian Merchant Codes</h2>
             <div class="preset-payloads-row">
-              <button type="button" class="btn btn-secondary btn-full btn-simulate-qr" data-merchant="City Metro Transit" data-amount="4.50" data-fee="0.00" data-category="Transit">
-                Simulate: City Metro Transit ($4.50)
+              <button type="button" class="btn btn-secondary btn-full btn-simulate-qr" data-merchant="Chennai Metro Rail (CMRL)" data-amount="40.00" data-fee="0.00" data-category="Transit">
+                Simulate: Chennai Metro Rail (₹40.00)
               </button>
-              <button type="button" class="btn btn-secondary btn-full btn-simulate-qr" data-merchant="Green Valley Organic Foods" data-amount="34.80" data-fee="0.00" data-category="Groceries">
-                Simulate: Green Valley Groceries ($34.80)
+              <button type="button" class="btn btn-secondary btn-full btn-simulate-qr" data-merchant="Nilgiris 1905 Supermarket" data-amount="485.50" data-fee="0.00" data-category="Groceries">
+                Simulate: Nilgiris Supermarket (₹485.50)
               </button>
-              <button type="button" class="btn btn-secondary btn-full btn-simulate-qr" data-merchant="Downtown Pharmacy Rx" data-amount="12.00" data-fee="0.00" data-category="Medical">
-                Simulate: Downtown Pharmacy ($12.00)
+              <button type="button" class="btn btn-secondary btn-full btn-simulate-qr" data-merchant="Apollo Pharmacy 24x7" data-amount="257.00" data-fee="0.00" data-category="Medical">
+                Simulate: Apollo Pharmacy (₹257.00)
               </button>
+              <button type="button" class="btn btn-outline btn-full btn-simulate-qr" data-merchant="Corrupted Payload Test" data-amount="-50" data-fee="0.00" data-category="Unknown">
+                Test: Malformed / Invalid QR
+              </button>
+            </div>
+
+            <!-- Manual Test Payload Decoder -->
+            <div style="margin-top: var(--space-3); padding-top: var(--space-2); border-top: 1px solid var(--border-color);">
+              <label for="input-manual-qr" class="form-label" style="font-size: var(--font-size-xs);">Manual QR Payload Test Entry</label>
+              <div style="display: flex; gap: var(--space-2);">
+                <input type="text" id="input-manual-qr" class="form-input" style="font-size: var(--font-size-xs);" placeholder='upi://pay?pa=cmrl@sbi&pn=CMRL&am=40.00&cu=INR'>
+                <button type="button" class="btn btn-primary" id="btn-decode-manual-qr" style="white-space: nowrap;">Decode</button>
+              </div>
             </div>
           </div>
         </section>
@@ -444,26 +459,45 @@
             </div>
 
             <div class="merchant-name-large" id="verify-merchant-name">
-              City Metro Transit
+              Chennai Metro Rail (CMRL)
             </div>
 
-            <div class="verify-amount-display" id="verify-amount-display" aria-label="Amount to pay: 4 dollars and 50 cents">
-              $4.50
+            <div class="verify-amount-display" id="verify-amount-display" aria-label="Amount to pay: 40 Rupees">
+              ₹40.00
             </div>
 
             <div class="verify-details-list">
               <div class="verify-detail-row">
                 <span style="color: var(--text-muted);">Payment Method:</span>
-                <span style="font-weight: 600;">PALMLOCK Instant Safe Debit</span>
+                <span style="font-weight: 600;">PALMLOCK Instant Safe UPI</span>
               </div>
               <div class="verify-detail-row">
                 <span style="color: var(--text-muted);">Processing Fee:</span>
-                <span style="font-weight: 600;">$0.00 (Zero Fee)</span>
+                <span style="font-weight: 600;">₹0.00 (Zero Fee)</span>
               </div>
               <div class="verify-detail-row">
                 <span style="color: var(--text-muted);">QR Signature ID:</span>
                 <span style="font-family: var(--font-family-mono); font-size: 0.8rem;" id="verify-qr-hash">PL-88392-CERT</span>
               </div>
+            </div>
+          </div>
+
+          <!-- Tactile Currency Verification Card (Digit-by-Digit Vibration) -->
+          <div class="card" role="region" aria-label="Tactile Currency Verification Controls">
+            <h2 class="heading-section" style="font-size: 1rem; margin-bottom: var(--space-1);">Tactile Currency Verification</h2>
+            <p style="font-size: var(--font-size-xs); color: var(--text-secondary); margin-bottom: var(--space-3);">
+              Feel digits before paying: <strong>Long pulses</strong> = Hundreds, <strong>Medium pulses</strong> = Tens, <strong>Short pulses</strong> = Ones.
+            </p>
+            <div style="display: flex; gap: var(--space-2); margin-bottom: var(--space-2);">
+              <button type="button" class="btn btn-secondary btn-full" id="btn-play-currency-vibrate" aria-label="Vibrate payment amount digit by digit">
+                ▶ Vibrate Amount
+              </button>
+              <button type="button" class="btn btn-outline" id="btn-stop-currency-vibrate" aria-label="Stop vibration playback" title="Stop Vibration">
+                ■ Stop
+              </button>
+              <button type="button" class="btn btn-outline" id="btn-repeat-currency-vibrate" aria-label="Repeat vibration pattern" title="Repeat Pattern">
+                ↻ Repeat
+              </button>
             </div>
           </div>
 
@@ -506,11 +540,11 @@
           </div>
 
           <!-- Gesture Interactive Canvas Area -->
-          <div class="gesture-canvas-area" id="pin-gesture-canvas" role="region" aria-label="Gesture touch pad. Swipe up, down, left, right or tap.">
+          <div class="gesture-canvas-area" id="pin-gesture-canvas" role="region" aria-label="Gesture touch pad. Swipe up, down, left, right, diagonals, or tap.">
             <div class="gesture-guide-compass" aria-hidden="true">
-              <div></div><div class="compass-arrow">↑</div><div></div>
-              <div class="compass-arrow">←</div><div class="compass-center">PIN</div><div class="compass-arrow">→</div>
-              <div></div><div class="compass-arrow">↓</div><div></div>
+              <div class="compass-arrow" style="font-size: 0.9rem;">↖ 1</div><div class="compass-arrow">↑ 2</div><div class="compass-arrow" style="font-size: 0.9rem;">↗ 3</div>
+              <div class="compass-arrow">← 4</div><div class="compass-center">PIN</div><div class="compass-arrow">5 →</div>
+              <div class="compass-arrow" style="font-size: 0.9rem;">↙ 6</div><div class="compass-arrow">↓ 7</div><div class="compass-arrow" style="font-size: 0.9rem;">↘ 8</div>
             </div>
           </div>
 
@@ -523,8 +557,29 @@
             </button>
           </div>
 
+          <!-- Accessible Direct Keypad Fallback for Screen Readers & Motor Impairment -->
+          <details class="card" style="margin-top: var(--space-2); padding: var(--space-2);">
+            <summary style="font-size: var(--font-size-xs); font-weight: 600; cursor: pointer; color: var(--accent-primary);">
+              Accessible Direct Keypad (Screen-Reader Fallback)
+            </summary>
+            <div class="accessible-keypad-grid" role="group" aria-label="Direct Numeric Buttons" style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 8px;">
+              <button type="button" class="btn btn-secondary btn-pin-digit" data-gesture="UP_LEFT" data-digit="1">1 (↖)</button>
+              <button type="button" class="btn btn-secondary btn-pin-digit" data-gesture="UP" data-digit="2">2 (↑)</button>
+              <button type="button" class="btn btn-secondary btn-pin-digit" data-gesture="UP_RIGHT" data-digit="3">3 (↗)</button>
+              <button type="button" class="btn btn-secondary btn-pin-digit" data-gesture="LEFT" data-digit="4">4 (←)</button>
+              <button type="button" class="btn btn-secondary btn-pin-digit" data-gesture="RIGHT" data-digit="5">5 (→)</button>
+              <button type="button" class="btn btn-secondary btn-pin-digit" data-gesture="DOWN_LEFT" data-digit="6">6 (↙)</button>
+              <button type="button" class="btn btn-secondary btn-pin-digit" data-gesture="DOWN" data-digit="7">7 (↓)</button>
+              <button type="button" class="btn btn-secondary btn-pin-digit" data-gesture="DOWN_RIGHT" data-digit="8">8 (↘)</button>
+              <button type="button" class="btn btn-secondary btn-pin-digit" data-gesture="DOUBLE_TAP" data-digit="9">9 (••)</button>
+              <div></div>
+              <button type="button" class="btn btn-secondary btn-pin-digit" data-gesture="SINGLE_TAP" data-digit="0">0 (•)</button>
+              <div></div>
+            </div>
+          </details>
+
           <div class="card" style="padding: var(--space-3); font-size: var(--font-size-xs); color: var(--text-muted);">
-            <div><strong>Accessibility Note:</strong> Normal PIN is <code>UP, RIGHT, UP, TAP</code>. Discreet Duress PIN is <code>DOWN, DOWN, LEFT, LEFT</code>.</div>
+            <div><strong>Accessibility Note:</strong> Normal PIN is <code>UP, RIGHT, UP, TAP (2-5-2-0)</code>. Discreet Duress PIN is <code>DOWN, DOWN, LEFT, LEFT (7-7-4-4)</code>. Inactivity auto-clears after 12 seconds.</div>
           </div>
         </section>
 
@@ -834,6 +889,15 @@
               Manage Trusted Guardians (2 Registered)
             </button>
           </div>
+
+          <!-- GPS Location Telemetry -->
+          <div class="card">
+            <h2 class="heading-section" style="font-size: 1.1rem;">GPS Location Telemetry</h2>
+            <div class="verify-detail-row">
+              <span style="color: var(--text-muted);">Current Telemetry:</span>
+              <span id="user-location-status" style="font-family: var(--font-family-mono); font-size: 0.85rem; color: var(--accent-primary);">Chennai Reference (13.0827° N, 80.2707° E)</span>
+            </div>
+          </div>
         </section>
 
       </main>
@@ -884,17 +948,46 @@
       </p>
       <div class="result-receipt-box" style="margin-bottom: var(--space-4);">
         <div class="verify-detail-row">
-          <span style="color: var(--text-muted);">Simulated GPS:</span>
-          <span>37.7749° N, 122.4194° W</span>
+          <span style="color: var(--text-muted);">Incident Coordinates:</span>
+          <span id="sos-modal-coords">13.0827° N, 80.2707° E (Chennai Central)</span>
         </div>
         <div class="verify-detail-row" style="margin-top: 4px;">
-          <span style="color: var(--text-muted);">Recipients:</span>
-          <span>Sarah Lin (Sister), Marcus Vance</span>
+          <span style="color: var(--text-muted);">Notified Guardians:</span>
+          <span id="sos-modal-recipients">Sarah Krishnan (Sister), Marcus Sundaram</span>
+        </div>
+        <div class="verify-detail-row" style="margin-top: 4px;">
+          <span style="color: var(--text-muted);">IndexedDB Queue:</span>
+          <span style="color: var(--color-success); font-weight: 600;">Preserved Locally</span>
         </div>
       </div>
-      <button type="button" class="btn btn-secondary btn-full" id="btn-close-sos-modal">
-        Dismiss Alert
-      </button>
+      <div style="display: flex; flex-direction: column; gap: var(--space-2);">
+        <button type="button" class="btn btn-secondary btn-full" id="btn-close-sos-modal">
+          Dismiss Alert
+        </button>
+        <button type="button" class="btn btn-outline btn-full" id="btn-report-false-alarm" style="color: var(--accent-primary); border-color: var(--border-color);">
+          Report Accidental Trigger / False Alarm
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Verify Contact OTP -->
+  <div id="modal-verify-otp" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="modal-otp-title">
+    <div class="modal-dialog">
+      <h2 id="modal-otp-title" class="heading-section">Guardian OTP Verification</h2>
+      <p id="otp-guardian-hint" style="font-size: var(--font-size-xs); color: var(--text-muted); margin-bottom: var(--space-3);">
+        Enter the simulated 4-digit OTP dispatched to your emergency contact.
+      </p>
+      <form id="form-verify-otp" novalidate>
+        <div class="form-group">
+          <label for="input-verify-otp" class="form-label">4-Digit Security Code</label>
+          <input type="text" id="input-verify-otp" class="form-input" style="font-size: 1.5rem; text-align: center; letter-spacing: 0.5rem;" maxlength="6" placeholder="4829" required>
+        </div>
+        <div style="display: flex; gap: var(--space-3);">
+          <button type="button" class="btn btn-secondary" id="btn-cancel-verify-otp" style="flex: 1;">Cancel</button>
+          <button type="submit" class="btn btn-primary" style="flex: 1;">Verify & Activate</button>
+        </div>
+      </form>
     </div>
   </div>
 
@@ -905,7 +998,7 @@
       <form id="form-new-contact" novalidate>
         <div class="form-group">
           <label for="contact-name-input" class="form-label">Full Name</label>
-          <input type="text" id="contact-name-input" class="form-input" placeholder="e.g. Elena Rostova" required>
+          <input type="text" id="contact-name-input" class="form-input" placeholder="e.g. Sarah Krishnan" required>
         </div>
         <div class="form-group">
           <label for="contact-relationship-input" class="form-label">Relationship</label>
@@ -913,7 +1006,17 @@
         </div>
         <div class="form-group">
           <label for="contact-phone-input" class="form-label">Phone Number</label>
-          <input type="tel" id="contact-phone-input" class="form-input" placeholder="e.g. +1 555-0192" required>
+          <input type="tel" id="contact-phone-input" class="form-input" placeholder="e.g. +91 94440 23891" required>
+        </div>
+        <div class="toggle-row" style="margin-bottom: var(--space-2);">
+          <div>
+            <label for="contact-is-primary" style="font-weight: 600;">Primary Guardian</label>
+            <div style="font-size: 0.8rem; color: var(--text-muted);">First recipient notified during emergency</div>
+          </div>
+          <label class="toggle-switch">
+            <input type="checkbox" id="contact-is-primary">
+            <span class="toggle-slider"></span>
+          </label>
         </div>
         <div class="toggle-row" style="margin-bottom: var(--space-4);">
           <div>

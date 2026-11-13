@@ -4,7 +4,18 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node test/verify_ui.mjs && node test/unit_logic.mjs && node test/verify_admin.mjs && node test/verify_map.mjs && node test/verify_gesture_pin.mjs && node test/verify_currency_vibrate.mjs && node test/verify_qr_logic.mjs && node test/verify_all_admin_sections.mjs && node test/regression_debug_suite.mjs && node test/full_functional_simulation.mjs",
+    "test:ui": "node test/verify_ui.mjs",
+    "test:logic": "node test/unit_logic.mjs",
+    "test:admin": "node test/verify_admin.mjs",
+    "test:map": "node test/verify_map.mjs",
+    "test:gestures": "node test/verify_gesture_pin.mjs",
+    "test:currency": "node test/verify_currency_vibrate.mjs",
+    "test:qr": "node test/verify_qr_logic.mjs",
+    "test:sections": "node test/verify_all_admin_sections.mjs",
+    "test:regression": "node test/regression_debug_suite.mjs",
+    "test:simulation": "node test/full_functional_simulation.mjs",
+    "test:syntax": "node --experimental-vm-modules test/syntax_audit.mjs"
   },
   "keywords": [],
   "author": "",

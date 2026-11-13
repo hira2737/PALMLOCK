@@ -25,25 +25,35 @@ import {
   handlePinGesture,
   undoPinGesture,
   clearPinGestures,
-  setPinCompleteCallback
+  setPinCompleteCallback,
+  setupShakeToClear,
+  GESTURE_TO_DIGIT
 } from './gestures.js';
 import {
   startCamera,
   stopCamera,
   toggleTorch,
-  simulateScannedQR
+  simulateScannedQR,
+  onQRCodeLocked
 } from './scanner.js';
 import {
   readPaymentDetails,
   verifyEnteredPin,
   renderHistoryList,
   renderDashboardRecentTransactions,
-  updateVerificationScreen
+  updateVerificationScreen,
+  playTactileCurrencyPattern,
+  stopTactileCurrencyPattern,
+  repeatTactileCurrencyPattern
 } from './payments.js';
 import { initContacts } from './contacts.js';
 import { initTutorial } from './tutorial.js';
+import { initOfflineQueue } from './offline-queue.js';
+import { captureEmergencyLocation, requestLocationAccess } from './location.js';
+import { apiReportEmergency, apiReportFalseAlarm } from './api.js';
 
 document.addEventListener('DOMContentLoaded', () => {
+  initOfflineQueue();
   initTopAccessibilityBar();
   initDesktopPreviewBar();
   initNavigation();
@@ -102,13 +112,42 @@ function initTopAccessibilityBar() {
 
   const sosBtn = document.getElementById('btn-trigger-sos');
   if (sosBtn) {
-    sosBtn.addEventListener('click', () => {
+    sosBtn.addEventListener('click', async () => {
       openModal('modal-sos-alert');
+      const loc = await captureEmergencyLocation();
+      const coordsEl = document.getElementById('sos-modal-coords');
+      if (coordsEl) coordsEl.textContent = loc.coords;
+
+      await apiReportEmergency({
+        type: 'SOS',
+        userId: state.user.id,
+        userName: state.user.name,
+        userPhone: state.user.phone,
+        location: loc.coords,
+        lat: loc.lat,
+        lng: loc.lng,
+        accuracyMeters: loc.accuracyMeters
+      });
+
       provideFeedback({
         text: 'Emergency SOS alert activated. Location coordinates and incident telemetry dispatched to trusted contacts.',
         gesture: 'ERROR',
         hapticPattern: [300, 100, 300, 100, 300],
         hapticLabel: 'SOS Triggered',
+        priority: true
+      });
+    });
+  }
+
+  const falseAlarmBtn = document.getElementById('btn-report-false-alarm');
+  if (falseAlarmBtn) {
+    falseAlarmBtn.addEventListener('click', async () => {
+      await apiReportFalseAlarm(`ALT-${new Date().getFullYear()}-SOS`, 'User cancelled accidental SOS trigger.');
+      closeModal('modal-sos-alert');
+      provideFeedback({
+        text: 'False alarm reported to security operations center. Alert status updated.',
+        gesture: 'SUCCESS',
+        hapticPattern: [100, 50, 100],
         priority: true
       });
     });
@@ -392,6 +431,25 @@ function initGestureEngines() {
     pinClearBtn.addEventListener('click', () => clearPinGestures());
   }
 
+  // Accessible numeric buttons for screen readers & direct entry
+  const pinDigitButtons = document.querySelectorAll('.btn-pin-digit');
+  pinDigitButtons.forEach(btn => {
+    btn.addEventListener('click', () => {
+      const gesture = btn.getAttribute('data-gesture');
+      if (gesture) handlePinGesture(gesture);
+    });
+  });
+
+  // Opt-in Shake-to-Clear motion gesture
+  setupShakeToClear(() => {
+    clearPinGestures();
+    provideFeedback({
+      text: 'Motion shake detected. Gesture PIN slots cleared.',
+      gesture: 'ERROR',
+      hapticPattern: 60
+    });
+  });
+
   const btnSwitchStealth = document.getElementById('btn-switch-to-stealth');
   if (btnSwitchStealth) {
     btnSwitchStealth.addEventListener('click', () => {
@@ -462,6 +520,22 @@ function initScannerControls() {
       simulateScannedQR({ merchant, amount, fee, category });
     });
   });
+
+  const manualDecodeBtn = document.getElementById('btn-decode-manual-qr');
+  if (manualDecodeBtn) {
+    manualDecodeBtn.addEventListener('click', () => {
+      const input = document.getElementById('input-manual-qr');
+      const rawText = input ? input.value.trim() : '';
+      if (rawText) {
+        onQRCodeLocked(rawText);
+      } else {
+        provideFeedback({
+          text: 'Please paste or enter a QR text payload to decode.',
+          gesture: 'ERROR'
+        });
+      }
+    });
+  }
 }
 
 /**
@@ -471,6 +545,22 @@ function initPaymentActions() {
   const readDetailsBtn = document.getElementById('btn-read-payment-details');
   if (readDetailsBtn) {
     readDetailsBtn.addEventListener('click', () => readPaymentDetails());
+  }
+
+  // Tactile Currency Verification Controls (Priority 2)
+  const playVibrateBtn = document.getElementById('btn-play-currency-vibrate');
+  if (playVibrateBtn) {
+    playVibrateBtn.addEventListener('click', () => playTactileCurrencyPattern());
+  }
+
+  const stopVibrateBtn = document.getElementById('btn-stop-currency-vibrate');
+  if (stopVibrateBtn) {
+    stopVibrateBtn.addEventListener('click', () => stopTactileCurrencyPattern());
+  }
+
+  const repeatVibrateBtn = document.getElementById('btn-repeat-currency-vibrate');
+  if (repeatVibrateBtn) {
+    repeatVibrateBtn.addEventListener('click', () => repeatTactileCurrencyPattern());
   }
 
   const proceedPinBtn = document.getElementById('btn-proceed-to-pin');
@@ -538,14 +628,15 @@ function initPracticeLab() {
 
   if (practiceCanvas) {
     new GestureRecognizer(practiceCanvas, (gesture) => {
+      const digit = GESTURE_TO_DIGIT[gesture] !== undefined ? GESTURE_TO_DIGIT[gesture] : '';
       if (detectedText) {
-        detectedText.textContent = `Detected: ${gesture}`;
+        detectedText.textContent = `Detected: ${gesture} (Digit ${digit})`;
       }
       provideFeedback({
-        text: gesture,
+        text: `${gesture}, Digit ${digit}`,
         gesture: gesture,
-        hapticPattern: gesture === 'TAP' ? 40 : 80,
-        hapticLabel: `Practiced: ${gesture}`,
+        hapticPattern: gesture === 'TAP' || gesture === 'SINGLE_TAP' ? 40 : 80,
+        hapticLabel: `Practiced: ${gesture} (Digit ${digit})`,
         priority: true
       });
     });

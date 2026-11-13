@@ -281,5 +281,127 @@ export const adminState = {
     { time: '14:18:10', text: 'Incident ALT-2026-8914 for David Thorne marked resolved by J. Miller.', type: 'success' },
     { time: '11:10:22', text: 'Transaction TX-99201944 verified safe ($4.50 at City Metro Transit).', type: 'info' },
     { time: 'Yesterday', text: 'Unverified QR code signature blocked at Haight & Ashbury for user Elena Rostova.', type: 'warning' }
+  ],
+
+  // Dedicated Trusted Contacts Directory
+  trustedContacts: [
+    {
+      id: 'cnt_adm_1',
+      name: 'Sarah Krishnan',
+      user: 'Maya Krishnan',
+      phone: '+91 94440 23891',
+      relationship: 'Sister & Primary Guardian',
+      isPrimary: true,
+      verificationStatus: 'verified',
+      notificationStatus: 'acknowledged',
+      lastActive: 'Just now'
+    },
+    {
+      id: 'cnt_adm_2',
+      name: 'Marcus Sundaram',
+      user: 'Maya Krishnan',
+      phone: '+91 98841 98143',
+      relationship: 'Personal Advocate',
+      isPrimary: false,
+      verificationStatus: 'verified',
+      notificationStatus: 'delivered',
+      lastActive: '10m ago'
+    },
+    {
+      id: 'cnt_adm_3',
+      name: 'Anita Thorne',
+      user: 'David Thorne',
+      phone: '+91 98402 33445',
+      relationship: 'Sister',
+      isPrimary: true,
+      verificationStatus: 'verified',
+      notificationStatus: 'no_response',
+      lastActive: '1h ago'
+    },
+    {
+      id: 'cnt_adm_4',
+      name: 'Rajesh Varma',
+      user: 'David Thorne',
+      phone: '+91 98408 55667',
+      relationship: 'Colleague & Guardian',
+      isPrimary: false,
+      verificationStatus: 'verified',
+      notificationStatus: 'acknowledged',
+      lastActive: '45m ago'
+    },
+    {
+      id: 'cnt_adm_5',
+      name: 'Gopal Sundaram',
+      user: 'Elena Sundaram',
+      phone: '+91 94442 88990',
+      relationship: 'Father',
+      isPrimary: true,
+      verificationStatus: 'pending',
+      notificationStatus: 'pending',
+      lastActive: 'Yesterday'
+    }
+  ],
+
+  // Escalation Audit Stream
+  escalations: [
+    {
+      id: 'ESC-2026-01',
+      incidentId: 'ALT-2026-8921',
+      user: 'Maya Krishnan',
+      tier: 'Tier 1 — Guardian Alert Dispatch',
+      primaryAck: 'Acknowledged (01m 20s)',
+      secondaryAck: 'Standby / Delivered',
+      elapsedTime: '02m 14s',
+      status: 'Active Monitoring',
+      action: 'Patrol Alerted'
+    },
+    {
+      id: 'ESC-2026-02',
+      incidentId: 'ALT-2026-8894',
+      user: 'David Thorne',
+      tier: 'Tier 2 — Secondary Contact Auto-Escalated',
+      primaryAck: 'Timed Out (>5 mins)',
+      secondaryAck: 'Acknowledged by Rajesh Varma',
+      elapsedTime: '06m 40s',
+      status: 'Escalated',
+      action: 'Voice Call Placed'
+    },
+    {
+      id: 'ESC-2026-03',
+      incidentId: 'ALT-2026-8802',
+      user: 'Elena Sundaram',
+      tier: 'Tier 1 — Guardian Alert Dispatch',
+      primaryAck: 'Acknowledged by Gopal Sundaram',
+      secondaryAck: 'Standby',
+      elapsedTime: '15m 00s',
+      status: 'Resolved',
+      action: 'False Alarm Closed'
+    }
+  ],
+
+  // False Alarm & Accidental Trigger Records
+  falseAlarms: [
+    {
+      id: 'FA-2026-01',
+      incidentId: 'ALT-2026-8802',
+      user: 'Elena Sundaram',
+      alertType: 'Repeated PIN Mismatch',
+      cancelledAt: 'Nov 11, 18:35 IST',
+      reason: 'Raindrops on mobile touch surface caused incorrect diagonal swipes.',
+      reviewStatus: 'Verified Accidental',
+      reviewingOfficer: 'Officer K. Ramanathan',
+      notes: 'No coercion present. User completed transaction safely on keypad.'
+    },
+    {
+      id: 'FA-2026-02',
+      incidentId: 'ALT-2026-8711',
+      user: 'Vikram Adityan',
+      alertType: 'SOS Hardware Long-Press',
+      cancelledAt: 'Nov 09, 14:14 IST',
+      reason: 'Accidental long-press of power button inside pocket triggered SOS shortcut.',
+      reviewStatus: 'Verified Accidental',
+      reviewingOfficer: 'Officer P. Lakshmi',
+      notes: 'Pocket activation confirmed. Guardian confirmed user was safe at workplace.'
+    }
   ]
 };

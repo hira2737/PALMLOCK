@@ -69,6 +69,27 @@
           </div>
         </button>
 
+        <button type="button" class="sidebar-nav-link" data-view="section-location-monitoring">
+          <div class="nav-link-content">
+            <svg viewBox="0 0 24 24"><polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"></polygon><line x1="8" y1="2" x2="8" y2="18"></line><line x1="16" y1="6" x2="16" y2="22"></line></svg>
+            <span>Location Monitoring</span>
+          </div>
+        </button>
+
+        <button type="button" class="sidebar-nav-link" data-view="section-escalation-history">
+          <div class="nav-link-content">
+            <svg viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
+            <span>Escalation History</span>
+          </div>
+        </button>
+
+        <button type="button" class="sidebar-nav-link" data-view="section-false-alarm-records">
+          <div class="nav-link-content">
+            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line></svg>
+            <span>False Alarm Records</span>
+          </div>
+        </button>
+
         <div class="nav-section-title">Directory & Ledgers</div>
 
         <button type="button" class="sidebar-nav-link" data-view="section-users">
@@ -78,10 +99,33 @@
           </div>
         </button>
 
+        <button type="button" class="sidebar-nav-link" data-view="section-trusted-contacts">
+          <div class="nav-link-content">
+            <svg viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="8.5" cy="7" r="4"></circle><polyline points="17 11 19 13 23 9"></polyline></svg>
+            <span>Trusted Contacts</span>
+          </div>
+        </button>
+
         <button type="button" class="sidebar-nav-link" data-view="section-transactions">
           <div class="nav-link-content">
             <svg viewBox="0 0 24 24"><line x1="12" y1="1" x2="12" y2="23"></line><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>
             <span>Transactions</span>
+          </div>
+        </button>
+
+        <div class="nav-section-title">System & Knowledge</div>
+
+        <button type="button" class="sidebar-nav-link" data-view="section-tutorial-management">
+          <div class="nav-link-content">
+            <svg viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path></svg>
+            <span>Tutorial Management</span>
+          </div>
+        </button>
+
+        <button type="button" class="sidebar-nav-link" data-view="section-settings">
+          <div class="nav-link-content">
+            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+            <span>Settings</span>
           </div>
         </button>
 
@@ -601,6 +645,249 @@
                   <!-- Populated from JS -->
                 </tbody>
               </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- ===============================================================
+             SECTION 6: TRUSTED CONTACTS DIRECTORY
+             =============================================================== -->
+        <section id="section-trusted-contacts" class="admin-view" aria-labelledby="heading-trusted-contacts">
+          <div class="view-header-row">
+            <div class="view-title-group">
+              <h1 id="heading-trusted-contacts">Trusted Emergency Guardians Directory</h1>
+              <p class="view-description">Monitor designated emergency contacts, verification OTP status, and cellular dispatch health.</p>
+            </div>
+          </div>
+
+          <div class="table-panel-card">
+            <div class="table-controls-bar">
+              <div class="table-filter-group">
+                <label for="filter-contacts-status" class="sr-only">Filter Guardians</label>
+                <select id="filter-contacts-status" class="table-select">
+                  <option value="all">All Guardians</option>
+                  <option value="verified">Verified Only</option>
+                  <option value="pending">Verification Pending</option>
+                </select>
+              </div>
+              <div style="font-size: var(--font-size-xs); color: var(--admin-text-muted);">
+                Showing <span id="contacts-filtered-count">0</span> emergency contacts
+              </div>
+            </div>
+
+            <div class="table-responsive-wrapper">
+              <table class="admin-data-table" aria-label="Emergency Guardians Table">
+                <thead>
+                  <tr>
+                    <th>Guardian Name</th>
+                    <th>Associated User</th>
+                    <th>Relationship</th>
+                    <th>Phone Number</th>
+                    <th>Designation</th>
+                    <th>Verification Status</th>
+                    <th>Dispatch State</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="table-contacts-body">
+                  <!-- Populated from JS -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- ===============================================================
+             SECTION 7: LOCATION MONITORING
+             =============================================================== -->
+        <section id="section-location-monitoring" class="admin-view" aria-labelledby="heading-location-monitoring">
+          <div class="view-header-row">
+            <div class="view-title-group">
+              <h1 id="heading-location-monitoring">Geographic Incident & Telemetry Monitoring</h1>
+              <p class="view-description">Live multi-incident mapping across Chennai urban transit corridors with GPS accuracy radiuses.</p>
+            </div>
+          </div>
+
+          <!-- Location Monitoring Layout Grid -->
+          <div class="incident-layout-grid" style="grid-template-columns: 2fr 1fr;">
+            <!-- Large Interactive Map -->
+            <div class="panel-card" style="padding: 0; overflow: hidden; height: 560px; position: relative;">
+              <div id="location-monitoring-map" style="width: 100%; height: 100%; z-index: 1;"></div>
+            </div>
+
+            <!-- Locations List / Telemetry Feed -->
+            <div class="panel-card" style="height: 560px; overflow-y: auto;">
+              <div class="panel-card-header">
+                <div class="panel-card-title">Active GPS Fixes</div>
+                <span class="status-pill info">Chennai Urban Hub</span>
+              </div>
+              <div id="location-telemetry-feed" style="display: flex; flex-direction: column; gap: 8px;">
+                <!-- Populated from JS -->
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ===============================================================
+             SECTION 8: ESCALATION HISTORY
+             =============================================================== -->
+        <section id="section-escalation-history" class="admin-view" aria-labelledby="heading-escalation-history">
+          <div class="view-header-row">
+            <div class="view-title-group">
+              <h1 id="heading-escalation-history">Emergency Escalation Audit Stream</h1>
+              <p class="view-description">Three-tier escalation tracking: Primary Contact, Secondary Contact, and Official Patrol Dispatch.</p>
+            </div>
+          </div>
+
+          <div class="table-panel-card">
+            <div class="table-responsive-wrapper">
+              <table class="admin-data-table" aria-label="Escalation History Table">
+                <thead>
+                  <tr>
+                    <th>Incident ID</th>
+                    <th>User</th>
+                    <th>Escalation Tier</th>
+                    <th>Primary Guardian Ack</th>
+                    <th>Secondary Guardian Ack</th>
+                    <th>Elapsed Time</th>
+                    <th>Status</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody id="table-escalation-body">
+                  <!-- Populated from JS -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- ===============================================================
+             SECTION 9: FALSE ALARM RECORDS
+             =============================================================== -->
+        <section id="section-false-alarm-records" class="admin-view" aria-labelledby="heading-false-alarm-records">
+          <div class="view-header-row">
+            <div class="view-title-group">
+              <h1 id="heading-false-alarm-records">False Alarm & Cancellation Registry</h1>
+              <p class="view-description">Audit user-reported accidental triggers and operator verification notes without record deletion.</p>
+            </div>
+          </div>
+
+          <div class="table-panel-card">
+            <div class="table-responsive-wrapper">
+              <table class="admin-data-table" aria-label="False Alarm Table">
+                <thead>
+                  <tr>
+                    <th>Incident ID</th>
+                    <th>User</th>
+                    <th>Original Alert</th>
+                    <th>Cancellation Timestamp</th>
+                    <th>User-Provided Explanation</th>
+                    <th>Review Status</th>
+                    <th>Reviewing Officer</th>
+                    <th>Officer Resolution</th>
+                  </tr>
+                </thead>
+                <tbody id="table-false-alarm-body">
+                  <!-- Populated from JS -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- ===============================================================
+             SECTION 10: TUTORIAL MANAGEMENT
+             =============================================================== -->
+        <section id="section-tutorial-management" class="admin-view" aria-labelledby="heading-tutorial-management">
+          <div class="view-header-row">
+            <div class="view-title-group">
+              <h1 id="heading-tutorial-management">Accessibility Curriculum Management</h1>
+              <p class="view-description">Review, enable, disable, and manage the 19 step-by-step user audio walkthrough lessons.</p>
+            </div>
+          </div>
+
+          <div class="table-panel-card">
+            <div class="table-responsive-wrapper">
+              <table class="admin-data-table" aria-label="Tutorial Lessons Table">
+                <thead>
+                  <tr>
+                    <th>Order #</th>
+                    <th>Lesson Title</th>
+                    <th>Category</th>
+                    <th>Instruction Preview</th>
+                    <th>Instructional Media</th>
+                    <th>Status</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody id="table-tutorial-admin-body">
+                  <!-- Populated from JS -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- ===============================================================
+             SECTION 11: SETTINGS
+             =============================================================== -->
+        <section id="section-settings" class="admin-view" aria-labelledby="heading-settings">
+          <div class="view-header-row">
+            <div class="view-title-group">
+              <h1 id="heading-settings">Security Operations Center Settings</h1>
+              <p class="view-description">Operator credentials, alert sirens, map tile configuration, and demo mode management.</p>
+            </div>
+          </div>
+
+          <div class="incident-layout-grid" style="grid-template-columns: 1fr 1fr;">
+            <!-- Operator Profile -->
+            <div class="panel-card">
+              <div class="panel-card-header">
+                <div class="panel-card-title">Operator Profile & Station</div>
+              </div>
+              <div style="display: flex; flex-direction: column; gap: 12px; margin-top: 12px;">
+                <div class="form-field">
+                  <label for="settings-officer-name">Active Duty Officer</label>
+                  <input type="text" id="settings-officer-name" class="form-input" value="Officer K. Ramanathan" readonly>
+                </div>
+                <div class="form-field">
+                  <label for="settings-soc-station">SOC Station Node</label>
+                  <input type="text" id="settings-soc-station" class="form-input" value="Chennai Metropolitan Area SOC — Node 04" readonly>
+                </div>
+                <div class="form-field">
+                  <label for="settings-auth-role">Authorization Level</label>
+                  <input type="text" id="settings-auth-role" class="form-input" value="Level 3 Incident Supervisor" readonly>
+                </div>
+              </div>
+            </div>
+
+            <!-- Operations Preferences -->
+            <div class="panel-card">
+              <div class="panel-card-header">
+                <div class="panel-card-title">SOC Environment & Data Controls</div>
+              </div>
+              <div style="display: flex; flex-direction: column; gap: 14px; margin-top: 12px;">
+                <div class="form-field">
+                  <label for="settings-map-provider">Cartographic Provider</label>
+                  <select id="settings-map-provider" class="table-select" style="width: 100%;">
+                    <option value="carto-dark">CartoDB Dark Matter (High Contrast SOC)</option>
+                    <option value="osm-standard">OpenStreetMap Standard</option>
+                  </select>
+                </div>
+                <div class="form-field">
+                  <label for="settings-siren-vol">Emergency Siren Audio</label>
+                  <select id="settings-siren-vol" class="table-select" style="width: 100%;">
+                    <option value="enabled">Audible Siren On Incident (Enabled)</option>
+                    <option value="muted">Silent Visual Flashing Only (Muted)</option>
+                  </select>
+                </div>
+                <div style="margin-top: 8px;">
+                  <button type="button" class="btn btn-secondary btn-full" id="btn-reset-demo-data">
+                    Reset Demonstration Data & Telemetry
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         </section>
