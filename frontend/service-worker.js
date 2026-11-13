@@ -3,7 +3,7 @@
  * Offline Service Worker
  */
 
-const CACHE_NAME = 'palmlock-v1';
+const CACHE_NAME = 'palmlock-v2';
 const ASSETS_TO_CACHE = [
   './',
   './index.html',
@@ -17,6 +17,10 @@ const ASSETS_TO_CACHE = [
   './js/user/payments.js',
   './js/user/contacts.js',
   './js/user/tutorial.js',
+  './js/user/location.js',
+  './js/user/offline-queue.js',
+  './js/user/api.js',
+  './js/shared/demoData.js',
   './manifest.json'
 ];
 

@@ -72,6 +72,16 @@ export function playGestureAudio(gesture) {
         osc.stop(now + 0.12);
         break;
 
+      case 'UP_LEFT':
+        playTone(350, 'triangle', 0.10, 0.15);
+        setTimeout(() => playTone(500, 'triangle', 0.08, 0.15), 60);
+        break;
+
+      case 'UP_RIGHT':
+        playTone(520, 'triangle', 0.10, 0.15);
+        setTimeout(() => playTone(680, 'triangle', 0.08, 0.15), 60);
+        break;
+
       case 'DOWN':
         osc.frequency.setValueAtTime(700, now);
         osc.frequency.exponentialRampToValueAtTime(320, now + 0.12);
@@ -79,6 +89,16 @@ export function playGestureAudio(gesture) {
         gain.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
         osc.start(now);
         osc.stop(now + 0.12);
+        break;
+
+      case 'DOWN_LEFT':
+        playTone(400, 'sawtooth', 0.10, 0.12);
+        setTimeout(() => playTone(250, 'sawtooth', 0.10, 0.12), 60);
+        break;
+
+      case 'DOWN_RIGHT':
+        playTone(450, 'sawtooth', 0.10, 0.12);
+        setTimeout(() => playTone(280, 'sawtooth', 0.10, 0.12), 60);
         break;
 
       case 'LEFT':
@@ -91,7 +111,13 @@ export function playGestureAudio(gesture) {
         setTimeout(() => playTone(800, 'sine', 0.08, 0.15), 70);
         break;
 
+      case 'DOUBLE_TAP':
+        playTone(750, 'sine', 0.05, 0.18);
+        setTimeout(() => playTone(920, 'sine', 0.06, 0.20), 80);
+        break;
+
       case 'TAP':
+      case 'SINGLE_TAP':
         osc.type = 'triangle';
         osc.frequency.setValueAtTime(900, now);
         gain.gain.setValueAtTime(0.2, now);

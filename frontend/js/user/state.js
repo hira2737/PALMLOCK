@@ -1,19 +1,15 @@
 /**
  * PALMLOCK — Touch Beyond Vision
  * Reactive Client State Management (Demonstration Store)
+ * Standardized for Indian Rupee (INR ₹), Chennai context, and 10-gesture PIN mapping
  */
+
+import { DEMO_USER, DEMO_CONTACTS, DEMO_TRANSACTIONS, INDIAN_MERCHANTS } from '../shared/demoData.js';
 
 export const state = {
   // User Profile
   user: {
-    id: "usr_8829104",
-    name: "Maya Lin",
-    email: "maya.lin@palmlock.app",
-    phone: "+1 (555) 019-2834",
-    visionLevel: "low-vision", // "total" | "low-vision" | "legally-blind" | "sighted-tester"
-    balance: 1420.50,
-    accountNumber: "••4902",
-    isLoggedIn: true
+    ...DEMO_USER
   },
 
   // Accessibility Preferences
@@ -24,24 +20,33 @@ export const state = {
     hapticEnabled: true,
     theme: "default", // "default" | "yellow-black" | "white-black" | "light-blue"
     fontSize: "standard", // "standard" | "large" | "xlarge"
-    soundTonesEnabled: true
+    soundTonesEnabled: true,
+    motionGesturesEnabled: false
   },
 
-  // Gesture PIN Configurations (Stored as directional input strings)
+  // Gesture PIN Configurations (Numeric gesture digits)
+  // Mapping: 1=Up-Left, 2=Up, 3=Up-Right, 4=Left, 5=Right, 6=Down-Left, 7=Down, 8=Down-Right, 9=DoubleTap, 0=SingleTap
   pins: {
+    // Default PIN: 2-5-2-0 (Up, Right, Up, Single Tap)
     standardPin: ["UP", "RIGHT", "UP", "TAP"],
-    duressPin: ["DOWN", "DOWN", "LEFT", "LEFT"]
+    standardPinDigits: [2, 5, 2, 0],
+    
+    // Duress PIN: 7-7-4-4 (Down, Down, Left, Left)
+    duressPin: ["DOWN", "DOWN", "LEFT", "LEFT"],
+    duressPinDigits: [7, 7, 4, 4]
   },
 
   // Current Transaction in Progress
   currentTransaction: {
-    merchantName: "City Metro Transit",
-    category: "Transit & Travel",
-    amount: 4.50,
+    merchantName: INDIAN_MERCHANTS[0].name,
+    category: INDIAN_MERCHANTS[0].category,
+    amount: 40.00,
     fee: 0.00,
-    total: 4.50,
+    total: 40.00,
+    currency: "INR",
+    currencySymbol: "₹",
     qrHash: "PL-88392-CERT",
-    referenceId: "TX-99482103",
+    referenceId: "TX-CMRL-99482103",
     timestamp: null
   },
 
@@ -50,70 +55,28 @@ export const state = {
   screenHistory: ["screen-dashboard"],
 
   // Trusted Emergency Guardians
-  contacts: [
-    {
-      id: "cnt_1",
-      name: "Sarah Lin",
-      relationship: "Sister & Primary Guardian",
-      phone: "+1 (555) 234-8901",
-      notifyOnDuress: true
-    },
-    {
-      id: "cnt_2",
-      name: "Marcus Vance",
-      relationship: "Personal Advocate",
-      phone: "+1 (555) 981-4320",
-      notifyOnDuress: true
-    }
-  ],
+  contacts: [...DEMO_CONTACTS],
 
   // Transaction Ledger (Demonstration History)
-  transactions: [
-    {
-      id: "tx_101",
-      merchant: "City Metro Transit",
-      category: "Transit",
-      amount: 4.50,
-      status: "completed",
-      isDuress: false,
-      date: "Today, 10:14 AM",
-      reference: "TX-99482103"
-    },
-    {
-      id: "tx_102",
-      merchant: "Green Valley Organic Foods",
-      category: "Groceries",
-      amount: 34.80,
-      status: "completed",
-      isDuress: false,
-      date: "Yesterday, 3:45 PM",
-      reference: "TX-99411982"
-    },
-    {
-      id: "tx_103",
-      merchant: "Downtown Pharmacy Rx",
-      category: "Medical",
-      amount: 12.00,
-      status: "completed",
-      isDuress: false,
-      date: "Nov 08, 1:20 PM",
-      reference: "TX-99380129"
-    },
-    {
-      id: "tx_104",
-      merchant: "ATM Cash Point #44",
-      category: "Cash Out",
-      amount: 100.00,
-      status: "duress_intercepted",
-      isDuress: true,
-      date: "Nov 02, 11:32 PM",
-      reference: "TX-DUR-87102"
-    }
-  ],
+  transactions: [...DEMO_TRANSACTIONS],
 
-  // In-flight PIN Entry buffer
+  // In-flight PIN Entry buffer (holds objects with { gesture, digit })
   enteredPin: [],
 
   // Stealth Mode State
-  isStealthActive: false
+  isStealthActive: false,
+
+  // Geolocation state
+  location: {
+    permissionState: "prompt", // "prompt" | "granted" | "denied" | "unavailable"
+    latitude: null,
+    longitude: null,
+    accuracy: null,
+    timestamp: null,
+    formatted: "Not captured"
+  },
+
+  // Offline sync queue count
+  offlineQueueCount: 0,
+  isOnline: navigator.onLine !== undefined ? navigator.onLine : true
 };

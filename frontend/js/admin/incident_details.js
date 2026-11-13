@@ -8,6 +8,7 @@ import { announceAdminEvent } from './admin.js';
 import { playAcknowledgeChime } from './audio.js';
 import { renderOverview } from './overview.js';
 import { renderAlertsTable } from './alerts.js';
+import { parseCoordinateString } from './map.js';
 
 let leafletMapInstance = null;
 let incidentMarkerLayer = null;
@@ -154,17 +155,9 @@ function parseCoordinates(incident) {
     return [incident.lat, incident.lng];
   }
   if (incident.gps) {
-    // Matches formats like "37.7749° N, 122.4194° W"
-    const match = incident.gps.match(/([\d.]+)[^\w]*([NS]),?\s*([\d.]+)[^\w]*([EW])/i);
-    if (match) {
-      let lat = parseFloat(match[1]);
-      if (match[2].toUpperCase() === 'S') lat = -lat;
-      let lng = parseFloat(match[3]);
-      if (match[4].toUpperCase() === 'W') lng = -lng;
-      return [lat, lng];
-    }
+    return parseCoordinateString(incident.gps);
   }
-  return [37.7749, -122.4194]; // Default to San Francisco
+  return [13.0827, 80.2707]; // Default to Chennai reference
 }
 
 /**
@@ -187,7 +180,7 @@ export function renderIncidentMap(incident) {
       if (fallbackContainer) fallbackContainer.style.display = 'none';
       mapContainer.style.display = 'block';
 
-      if (!leafletMapInstance) {
+      if (!leafletMapInstance && !mapContainer._leaflet_id) {
         leafletMapInstance = window.L.map('incident-map', {
           center: [lat, lng],
           zoom: 16,
