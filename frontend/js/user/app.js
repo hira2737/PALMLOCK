@@ -1,25 +1,38 @@
+
 /**
  * PALMLOCK — Touch Beyond Vision
  * Main Application Bootstrap & Controller
+ *
+ * Backend-authenticated registration and login.
+ * Security PIN onboarding.
+ * MongoDB-backed trusted contact integration.
+ * Accessible navigation, gestures, QR scanning,
+ * simulated payments, SOS and settings.
+ *
+ * IMPORTANT:
+ * All payments and OTP notifications are simulated.
+ * Emergency reporting does not guarantee SMS delivery
+ * or contact with emergency services.
  */
 
 import { state } from './state.js';
+
 import {
   provideFeedback,
-  speak,
   stopSpeech,
   setTheme,
   cycleTheme,
   setFontSize,
-  cycleFontSize,
-  triggerHaptic
+  cycleFontSize
 } from './accessibility.js';
+
 import {
   navigateTo,
   navigateBack,
   openModal,
   closeModal
 } from './navigation.js';
+
 import {
   GestureRecognizer,
   handlePinGesture,
@@ -29,6 +42,7 @@ import {
   setupShakeToClear,
   GESTURE_TO_DIGIT
 } from './gestures.js';
+
 import {
   startCamera,
   stopCamera,
@@ -36,6 +50,7 @@ import {
   simulateScannedQR,
   onQRCodeLocked
 } from './scanner.js';
+
 import {
   readPaymentDetails,
   verifyEnteredPin,
@@ -46,728 +61,2090 @@ import {
   stopTactileCurrencyPattern,
   repeatTactileCurrencyPattern
 } from './payments.js';
-import { initContacts } from './contacts.js';
+
+import {
+  initContacts,
+  loadContacts
+} from './contacts.js';
+
 import { initTutorial } from './tutorial.js';
 import { initOfflineQueue } from './offline-queue.js';
-import { captureEmergencyLocation, requestLocationAccess } from './location.js';
-import { apiReportEmergency, apiReportFalseAlarm } from './api.js';
 
-document.addEventListener('DOMContentLoaded', () => {
-  initOfflineQueue();
-  initTopAccessibilityBar();
-  initDesktopPreviewBar();
-  initNavigation();
-  initFormInteractions();
-  initGestureEngines();
-  initScannerControls();
-  initPaymentActions();
-  initPracticeLab();
-  initSettingsControls();
-  initContacts();
-  initTutorial();
-  initGlobalKeyboardShortcuts();
+import {
+  captureEmergencyLocation
+} from './location.js';
 
-  // Initial Data Renders
-  renderDashboardRecentTransactions();
-  renderHistoryList('all');
-  updateVerificationScreen();
+import {
+  apiReportEmergency,
+  apiReportFalseAlarm
+} from './api.js';
 
-  console.info('PALMLOCK mobile accessibility interface initialized successfully.');
-});
+/* ============================================================
+   CONFIGURATION
+============================================================ */
 
-/**
- * 1. Top Persistent Accessibility Bar Controls
- */
-function initTopAccessibilityBar() {
-  const speechToggle = document.getElementById('btn-toggle-speech');
-  if (speechToggle) {
-    speechToggle.addEventListener('click', () => {
-      state.preferences.speechEnabled = !state.preferences.speechEnabled;
-      speechToggle.setAttribute('aria-pressed', state.preferences.speechEnabled.toString());
-      speechToggle.title = `Audio Announcements: ${state.preferences.speechEnabled ? 'On' : 'Off'}`;
-      if (!state.preferences.speechEnabled) {
-        stopSpeech();
-      }
-      provideFeedback({
-        text: `Audio announcements ${state.preferences.speechEnabled ? 'enabled' : 'disabled'}`,
-        hapticPattern: 50,
-        hapticLabel: 'Speech Toggled'
-      });
-    });
-  }
+const API_BASE =
+  window.location.port === '5000'
+    ? '/api'
+    : window.location.protocol.startsWith('http')
+      ? `${window.location.protocol}//${window.location.hostname}:5000/api`
+      : '/api';
 
-  const themeBtn = document.getElementById('btn-cycle-theme');
-  if (themeBtn) {
-    themeBtn.addEventListener('click', () => {
-      cycleTheme();
-    });
-  }
+const AUTH_TIMEOUT_MS = 12000;
 
-  const fontBtn = document.getElementById('btn-cycle-font');
-  if (fontBtn) {
-    fontBtn.addEventListener('click', () => {
-      cycleFontSize();
-    });
-  }
+let authBusy = false;
+let pinSetupBusy = false;
+let guardianContinueBusy = false;
+let lastSosIncidentId = null;
+let onboardingRequired = false;
+let contactsReady = false;
+let initialized = false;
 
-  const sosBtn = document.getElementById('btn-trigger-sos');
-  if (sosBtn) {
-    sosBtn.addEventListener('click', async () => {
-      openModal('modal-sos-alert');
-      const loc = await captureEmergencyLocation();
-      const coordsEl = document.getElementById('sos-modal-coords');
-      if (coordsEl) coordsEl.textContent = loc.coords;
+/* ============================================================
+   COMMON HELPERS
+============================================================ */
 
-      await apiReportEmergency({
-        type: 'SOS',
-        userId: state.user.id,
-        userName: state.user.name,
-        userPhone: state.user.phone,
-        location: loc.coords,
-        lat: loc.lat,
-        lng: loc.lng,
-        accuracyMeters: loc.accuracyMeters
-      });
+function getField(id) {
+  return document.getElementById(id);
+}
 
-      provideFeedback({
-        text: 'Emergency SOS alert activated. Location coordinates and incident telemetry dispatched to trusted contacts.',
-        gesture: 'ERROR',
-        hapticPattern: [300, 100, 300, 100, 300],
-        hapticLabel: 'SOS Triggered',
-        priority: true
-      });
-    });
-  }
+function getValue(id) {
+  return getField(id)?.value?.trim() || '';
+}
 
-  const falseAlarmBtn = document.getElementById('btn-report-false-alarm');
-  if (falseAlarmBtn) {
-    falseAlarmBtn.addEventListener('click', async () => {
-      await apiReportFalseAlarm(`ALT-${new Date().getFullYear()}-SOS`, 'User cancelled accidental SOS trigger.');
-      closeModal('modal-sos-alert');
-      provideFeedback({
-        text: 'False alarm reported to security operations center. Alert status updated.',
-        gesture: 'SUCCESS',
-        hapticPattern: [100, 50, 100],
-        priority: true
-      });
-    });
-  }
+function showFieldError(id, message) {
+  const element = getField(id);
 
-  const closeSosBtn = document.getElementById('btn-close-sos-modal');
-  if (closeSosBtn) {
-    closeSosBtn.addEventListener('click', () => {
-      closeModal('modal-sos-alert');
-    });
-  }
-
-  const brandLink = document.getElementById('brand-home-link');
-  if (brandLink) {
-    brandLink.addEventListener('click', (e) => {
-      e.preventDefault();
-      navigateTo('screen-dashboard');
-    });
+  if (element) {
+    element.textContent = message || '';
   }
 }
 
-/**
- * 2. Desktop Preview Bar & Direct Screen Switcher
- */
-function initDesktopPreviewBar() {
-  const fastNav = document.getElementById('screen-fast-nav');
-  if (fastNav) {
-    fastNav.addEventListener('change', (e) => {
-      const targetScreen = e.target.value;
-      if (targetScreen === 'screen-scanner') {
-        navigateTo(targetScreen);
-        startCamera();
-      } else {
-        stopCamera();
-        navigateTo(targetScreen);
-      }
-    });
+function announceError(message) {
+  provideFeedback({
+    text: message,
+    gesture: 'ERROR',
+    hapticPattern: [150, 100, 150],
+    priority: true
+  });
+}
+
+function announceSuccess(message) {
+  provideFeedback({
+    text: message,
+    gesture: 'SUCCESS',
+    hapticPattern: [100, 70, 100],
+    priority: true
+  });
+}
+
+function getStoredToken() {
+  try {
+    return (
+      sessionStorage.getItem('palmlock_token') ||
+      localStorage.getItem('palmlock_token') ||
+      state.authToken ||
+      null
+    );
+  } catch (_) {
+    return state.authToken || null;
+  }
+}
+
+function saveSession(token, user) {
+  if (typeof token !== 'string' || !token.trim()) {
+    throw new Error(
+      'Authentication succeeded without a valid token.'
+    );
   }
 
-  const fullscreenBtn = document.getElementById('btn-toggle-fullscreen');
-  if (fullscreenBtn) {
-    fullscreenBtn.addEventListener('click', () => {
-      document.body.classList.toggle('fullscreen-mode');
-      const isFull = document.body.classList.contains('fullscreen-mode');
-      fullscreenBtn.textContent = isFull ? 'Mobile Frame' : 'Toggle Frame';
+  try {
+    sessionStorage.setItem('palmlock_token', token);
+    localStorage.removeItem('palmlock_token');
+  } catch (_) {
+    // The current tab can still use the in-memory token.
+  }
+
+  state.authToken = token;
+
+  if (!state.auth || typeof state.auth !== 'object') {
+    state.auth = {};
+  }
+
+  state.auth.token = token;
+
+  if (user && typeof user === 'object') {
+    state.user = {
+      ...user,
+      id: user.id || user._id
+    };
+  }
+
+  // Never retain another account's guardian data.
+  state.contacts = [];
+  contactsReady = false;
+
+  updateGuardianOnboardingUI();
+}
+
+function clearSession() {
+  state.authToken = null;
+  state.user = null;
+  state.contacts = [];
+  state.currentTransaction = null;
+
+  onboardingRequired = false;
+  contactsReady = false;
+  guardianContinueBusy = false;
+  lastSosIncidentId = null;
+
+  if (state.auth && typeof state.auth === 'object') {
+    state.auth.token = null;
+  }
+
+  try {
+    sessionStorage.removeItem('palmlock_token');
+    localStorage.removeItem('palmlock_token');
+    localStorage.removeItem('authToken');
+  } catch (_) {
+    // Storage may be unavailable.
+  }
+
+  renderContactsSafely();
+  updateGuardianOnboardingUI();
+}
+
+function renderContactsSafely() {
+  // Contact UI is rendered by contacts.js.
+  // A successful loadContacts() refreshes that UI.
+
+  const container = getField('contacts-list-container');
+
+  if (container && !getStoredToken()) {
+    container.textContent =
+      'Sign in to view your trusted contacts.';
+  }
+}
+
+function extractSession(data) {
+  const payload = data?.data || data || {};
+
+  return {
+    token:
+      payload.token ||
+      payload.accessToken ||
+      payload.authToken ||
+      data?.token ||
+      data?.accessToken ||
+      null,
+
+    user:
+      payload.user ||
+      data?.user ||
+      null,
+
+    onboardingRequired:
+      payload.onboardingRequired ??
+      data?.onboardingRequired ??
+      false
+  };
+}
+
+function setBusy(button, busy, busyLabel) {
+  if (!button) return;
+
+  if (busy) {
+    if (!button.dataset.originalLabel) {
+      button.dataset.originalLabel = button.innerHTML;
+    }
+
+    button.disabled = true;
+    button.textContent = busyLabel;
+  } else {
+    button.disabled = false;
+
+    if (button.dataset.originalLabel) {
+      button.innerHTML = button.dataset.originalLabel;
+      delete button.dataset.originalLabel;
+    }
+  }
+}
+
+/* ============================================================
+   BACKEND REQUESTS
+============================================================ */
+
+async function authRequest(endpoint, payload) {
+  const controller = new AbortController();
+
+  const timer = setTimeout(
+    () => controller.abort(),
+    AUTH_TIMEOUT_MS
+  );
+
+  try {
+    const response = await fetch(
+      `${API_BASE}${endpoint}`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload),
+        signal: controller.signal
+      }
+    );
+
+    const raw = await response.text();
+    let data = {};
+
+    try {
+      data = raw ? JSON.parse(raw) : {};
+    } catch (_) {
+      return {
+        ok: false,
+        status: response.status,
+        data: {
+          error: 'Invalid authentication server response.'
+        }
+      };
+    }
+
+    return {
+      ok: response.ok,
+      status: response.status,
+      data
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      status: 0,
+      data: {
+        error:
+          error.name === 'AbortError'
+            ? 'Authentication request timed out.'
+            : 'Unable to connect to the authentication server.'
+      }
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function authenticatedRequest(endpoint, payload) {
+  const token = getStoredToken();
+
+  if (!token) {
+    throw new Error(
+      'Your session is missing. Please sign in again.'
+    );
+  }
+
+  const controller = new AbortController();
+
+  const timer = setTimeout(
+    () => controller.abort(),
+    AUTH_TIMEOUT_MS
+  );
+
+  try {
+    const response = await fetch(
+      `${API_BASE}${endpoint}`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify(payload),
+        signal: controller.signal
+      }
+    );
+
+    let data;
+
+    try {
+      data = await response.json();
+    } catch (_) {
+      throw new Error(
+        'Invalid response from the security server.'
+      );
+    }
+
+    if (!response.ok || data.success === false) {
+      const error = new Error(
+        data.error ||
+        data.message ||
+        'Security request failed.'
+      );
+
+      error.status = response.status;
+      throw error;
+    }
+
+    return data;
+  } catch (error) {
+    if (error.name === 'AbortError') {
+      throw new Error(
+        'Security request timed out. Check your connection.'
+      );
+    }
+
+    if (error instanceof TypeError) {
+      throw new Error(
+        'Unable to connect to the security server.'
+      );
+    }
+
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/* ============================================================
+   TRUSTED CONTACT INTEGRATION
+============================================================ */
+
+function hasVerifiedPrimaryGuardian() {
+  return (
+    contactsReady &&
+    Array.isArray(state.contacts) &&
+    state.contacts.some(contact =>
+      contact.isPrimary === true &&
+      contact.verificationStatus === 'verified' &&
+      contact.notifyOnDuress === true
+    )
+  );
+}
+
+function updateGuardianOnboardingUI() {
+  const button = getField('btn-continue-dashboard');
+  const status = getField('guardian-onboarding-status');
+
+  if (!button || !status) return;
+
+  button.disabled = true;
+
+  if (guardianContinueBusy) {
+    button.textContent = 'Verifying Guardian...';
+    status.textContent =
+      'Confirming guardian status with the server.';
+    return;
+  }
+
+  if (!getStoredToken()) {
+    button.textContent = 'Sign In to Continue';
+    status.textContent =
+      'Please sign in to complete guardian setup.';
+    return;
+  }
+
+  if (onboardingRequired) {
+    button.textContent = 'Complete Security PIN Setup';
+    status.textContent =
+      'Complete your security PIN setup before continuing.';
+    return;
+  }
+
+  if (!contactsReady) {
+    button.textContent = 'Checking Guardian Verification...';
+    status.textContent =
+      'Guardian verification has not been confirmed. ' +
+      'Please check your connection.';
+    return;
+  }
+
+  if (!hasVerifiedPrimaryGuardian()) {
+    button.textContent =
+      'Verify Primary Guardian to Continue';
+
+    status.textContent =
+      'A verified primary guardian with emergency ' +
+      'notifications enabled is required.';
+
+    return;
+  }
+
+  button.disabled = false;
+  button.textContent = 'Continue to Dashboard';
+
+  status.textContent =
+    'Your primary guardian is verified and emergency ' +
+    'notifications are enabled. You can now continue.';
+}
+
+async function refreshTrustedContacts(options = {}) {
+  const { silent = false } = options;
+
+  if (!getStoredToken()) {
+    contactsReady = false;
+    state.contacts = [];
+    updateGuardianOnboardingUI();
+    return false;
+  }
+
+  contactsReady = false;
+  updateGuardianOnboardingUI();
+
+  try {
+    const result = await loadContacts();
+
+    // The expected contacts.js contract returns an array.
+    // Some implementations instead update state.contacts
+    // and return the API response object.
+    const contacts =
+      Array.isArray(result)
+        ? result
+        : Array.isArray(result?.contacts)
+          ? result.contacts
+          : Array.isArray(result?.data?.contacts)
+            ? result.data.contacts
+            : Array.isArray(state.contacts)
+              ? state.contacts
+              : null;
+
+    if (!Array.isArray(contacts)) {
+      throw new Error(
+        'Invalid trusted contacts response.'
+      );
+    }
+
+    state.contacts = contacts;
+    contactsReady = true;
+
+    updateGuardianOnboardingUI();
+    return true;
+  } catch (error) {
+    contactsReady = false;
+    state.contacts = [];
+
+    updateGuardianOnboardingUI();
+
+    console.warn(
+      '[PALMLOCK CONTACTS] Load failed:',
+      error.message
+    );
+
+    if (!silent) {
+      announceError(
+        'Unable to load trusted contacts. ' +
+        'Please check your connection and retry.'
+      );
+    }
+
+    return false;
+  }
+}
+
+async function openContactsScreen() {
+  if (!getStoredToken()) {
+    announceError(
+      'Please sign in to manage contacts.'
+    );
+
+    navigateTo('screen-welcome');
+    return;
+  }
+
+  navigateTo('screen-contacts');
+
+  await refreshTrustedContacts({
+    silent: true
+  });
+}
+
+function canAccessProtectedScreens() {
+  if (!getStoredToken()) {
+    announceError('Please sign in to continue.');
+    navigateTo('screen-welcome');
+    return false;
+  }
+
+  if (onboardingRequired) {
+    announceError(
+      'Complete your security PIN setup first.'
+    );
+
+    openPinSetup();
+    return false;
+  }
+
+  return true;
+}
+
+function navigateProtected(target) {
+  if (!canAccessProtectedScreens()) return;
+
+  if (target === 'screen-contacts') {
+    void openContactsScreen();
+    return;
+  }
+
+  if (target === 'screen-scanner') {
+    navigateTo(target);
+    startCamera();
+    return;
+  }
+
+  stopCamera();
+  navigateTo(target);
+}
+
+/* ============================================================
+   ONBOARDING HELPERS
+============================================================ */
+
+function clearPinSetupFields() {
+  [
+    'setup-standard-pin',
+    'setup-standard-confirm',
+    'setup-duress-pin',
+    'setup-duress-confirm'
+  ].forEach(id => {
+    const field = getField(id);
+
+    if (field) {
+      field.value = '';
+    }
+  });
+}
+
+function validatePinSetup() {
+  const standardPin =
+    getField('setup-standard-pin')?.value || '';
+
+  const standardConfirm =
+    getField('setup-standard-confirm')?.value || '';
+
+  const duressPin =
+    getField('setup-duress-pin')?.value || '';
+
+  const duressConfirm =
+    getField('setup-duress-confirm')?.value || '';
+
+  if (
+    !/^\d{4}$/.test(standardPin) ||
+    !/^\d{4}$/.test(duressPin)
+  ) {
+    throw new Error(
+      'Both security PINs must contain exactly four digits.'
+    );
+  }
+
+  if (standardPin !== standardConfirm) {
+    throw new Error(
+      'Normal PIN confirmation does not match.'
+    );
+  }
+
+  if (duressPin !== duressConfirm) {
+    throw new Error(
+      'Emergency PIN confirmation does not match.'
+    );
+  }
+
+  if (standardPin === duressPin) {
+    throw new Error(
+      'Normal and emergency PINs must be different.'
+    );
+  }
+
+  return {
+    standardPin,
+    duressPin
+  };
+}
+
+function openPinSetup() {
+  clearPinSetupFields();
+  showFieldError('pin-setup-error', '');
+  navigateTo('screen-pin-setup');
+}
+
+/* ============================================================
+   BOOTSTRAP
+============================================================ */
+
+document.addEventListener(
+  'DOMContentLoaded',
+  async () => {
+    if (initialized) return;
+
+    initialized = true;
+
+    initOfflineQueue();
+    initTopAccessibilityBar();
+    initDesktopPreviewBar();
+    initNavigation();
+    initFormInteractions();
+    initGestureEngines();
+    initScannerControls();
+    initPaymentActions();
+    initPracticeLab();
+    initSettingsControls();
+    initContacts();
+    initTutorial();
+    initGlobalKeyboardShortcuts();
+
+    renderDashboardRecentTransactions();
+    renderHistoryList('all');
+    updateVerificationScreen();
+
+    updateGuardianOnboardingUI();
+
+    if (!getStoredToken()) {
+      navigateTo('screen-welcome', false);
+    } else {
+      // Check saved-session contacts with the server.
+      // A saved token alone does not prove that
+      // guardian verification is still valid.
+
+      navigateTo('screen-contacts', false);
+
+      const loaded = await refreshTrustedContacts({
+        silent: true
+      });
+
+      if (!loaded) {
+        provideFeedback({
+          text:
+            'Your saved session could not load trusted ' +
+            'contacts. Please sign in again if the ' +
+            'problem continues.',
+          priority: true
+        });
+      }
+    }
+
+    console.info(
+      'PALMLOCK mobile accessibility interface initialized.'
+    );
+  }
+);
+
+/* ============================================================
+   ACCESSIBILITY BAR AND SOS
+============================================================ */
+
+function initTopAccessibilityBar() {
+  const speechToggle = getField('btn-toggle-speech');
+
+  speechToggle?.addEventListener('click', () => {
+    state.preferences.speechEnabled =
+      !state.preferences.speechEnabled;
+
+    const enabled = state.preferences.speechEnabled;
+
+    speechToggle.setAttribute(
+      'aria-pressed',
+      String(enabled)
+    );
+
+    speechToggle.title =
+      `Audio Announcements: ${enabled ? 'On' : 'Off'}`;
+
+    if (!enabled) {
+      stopSpeech();
+    }
+
+    provideFeedback({
+      text:
+        `Audio announcements ${enabled ? 'enabled' : 'disabled'}`,
+      hapticPattern: 50
+    });
+  });
+
+  getField('btn-cycle-theme')
+    ?.addEventListener('click', cycleTheme);
+
+  getField('btn-cycle-font')
+    ?.addEventListener('click', cycleFontSize);
+
+  const sosBtn = getField('btn-trigger-sos');
+
+  sosBtn?.addEventListener('click', async () => {
+    if (!getStoredToken()) {
+      announceError(
+        'Sign in before using PALMLOCK emergency reporting.'
+      );
+      return;
+    }
+
+    // The modal is opened immediately, but the backend
+    // incident must still be confirmed separately.
+    openModal('modal-sos-alert');
+
+    const recipientsEl =
+      getField('sos-modal-recipients');
+
+    if (recipientsEl) {
+      recipientsEl.textContent =
+        'Checking configured guardians...';
+    }
+
+    let location = null;
+
+    try {
+      location = await captureEmergencyLocation();
+    } catch (error) {
+      console.warn(
+        '[PALMLOCK SOS] Location unavailable.',
+        error
+      );
+    }
+
+    const coordsEl = getField('sos-modal-coords');
+
+    if (coordsEl) {
+      coordsEl.textContent =
+        location?.coords
+          ? typeof location.coords === 'string'
+            ? location.coords
+            : JSON.stringify(location.coords)
+          : 'Location unavailable';
+    }
+
+    let result;
+
+    try {
+      result = await apiReportEmergency({
+        type: 'SOS',
+        userId: state.user?.id,
+        userName: state.user?.name,
+        userPhone: state.user?.phone,
+        location: location?.coords || null,
+        lat: location?.lat ?? null,
+        lng: location?.lng ?? null,
+        accuracyMeters:
+          location?.accuracyMeters ?? null
+      });
+    } catch (error) {
+      console.error('[PALMLOCK SOS]', error);
+
+      if (recipientsEl) {
+        recipientsEl.textContent =
+          'Notification not confirmed';
+      }
+
+      announceError(
+        'Emergency report failed. ' +
+        'Please use another emergency contact method.'
+      );
+      return;
+    }
+
+    lastSosIncidentId =
+      result?.incident?.incidentId ||
+      result?.incident?.id ||
+      result?.incident?._id ||
+      null;
+
+    if (recipientsEl) {
+      recipientsEl.textContent =
+        result?.delivered
+          ? 'Server incident accepted; guardian notification unconfirmed'
+          : result?.queued
+            ? 'Alert queued locally; notification pending'
+            : 'No guardian notification confirmed';
+    }
+
+    const message = result?.delivered
+      ? 'SOS incident accepted by the PALMLOCK server. ' +
+        'Guardian delivery is not yet confirmed.'
+      : result?.queued
+        ? 'SOS saved locally. Server delivery is pending.'
+        : 'SOS could not be confirmed or saved. ' +
+          'Please use another emergency contact method.';
+
+    provideFeedback({
+      text: message,
+      gesture: 'ERROR',
+      hapticPattern: [300, 100, 300, 100, 300],
+      priority: true
+    });
+  });
+
+  getField('btn-report-false-alarm')
+    ?.addEventListener('click', async () => {
+      if (!lastSosIncidentId) {
+        announceError(
+          'No confirmed SOS incident identifier is available.'
+        );
+        return;
+      }
+
+      try {
+        const result = await apiReportFalseAlarm(
+          lastSosIncidentId,
+          'User reported accidental SOS trigger.'
+        );
+
+        if (result.backendConfirmed) {
+          closeModal('modal-sos-alert');
+
+          announceSuccess(
+            'False alarm report confirmed by the server.'
+          );
+        } else {
+          provideFeedback({
+            text:
+              'False alarm recorded locally. ' +
+              'Server confirmation is pending.',
+            priority: true
+          });
+        }
+      } catch (error) {
+        announceError(
+          'Unable to confirm false alarm with the server.'
+        );
+      }
+    });
+
+  getField('btn-close-sos-modal')
+    ?.addEventListener('click', () => {
+      closeModal('modal-sos-alert');
+    });
+
+  getField('brand-home-link')
+    ?.addEventListener('click', event => {
+      event.preventDefault();
+      navigateProtected('screen-dashboard');
+    });
+}
+
+/* ============================================================
+   DESKTOP PREVIEW
+============================================================ */
+
+function initDesktopPreviewBar() {
+  getField('screen-fast-nav')
+    ?.addEventListener('change', event => {
+      navigateProtected(event.target.value);
+    });
+
+  getField('btn-toggle-fullscreen')
+    ?.addEventListener('click', event => {
+      document.body.classList.toggle(
+        'fullscreen-mode'
+      );
+
+      const enabled =
+        document.body.classList.contains(
+          'fullscreen-mode'
+        );
+
+      event.currentTarget.textContent =
+        enabled
+          ? 'Mobile Frame'
+          : 'Toggle Frame';
+
       provideFeedback({
-        text: isFull ? 'Switched to fullscreen responsive mode' : 'Switched to simulated phone frame',
+        text: enabled
+          ? 'Switched to fullscreen responsive mode.'
+          : 'Switched to simulated phone frame.',
         hapticPattern: 40
       });
     });
-  }
 }
 
-/**
- * 3. Bottom Navigation & Header Back Buttons
- */
+/* ============================================================
+   NAVIGATION
+============================================================ */
+
 function initNavigation() {
-  // Bottom Navigation Bar
-  const navItems = document.querySelectorAll('.bottom-nav .nav-item');
-  navItems.forEach(item => {
+  document.querySelectorAll(
+    '.bottom-nav .nav-item'
+  ).forEach(item => {
     item.addEventListener('click', () => {
       const target = item.getAttribute('data-nav');
+
       if (target) {
-        if (target === 'screen-scanner') {
-          navigateTo(target);
-          startCamera();
-        } else {
-          stopCamera();
-          navigateTo(target);
-        }
+        navigateProtected(target);
       }
     });
   });
 
-  // Contextual Header Back Buttons
-  const backButtons = document.querySelectorAll('[data-back], .btn-header-back');
-  backButtons.forEach(btn => {
-    btn.addEventListener('click', () => {
+  document.querySelectorAll(
+    '[data-back], .btn-header-back'
+  ).forEach(button => {
+    button.addEventListener('click', () => {
       stopCamera();
-      const explicitBack = btn.getAttribute('data-back');
-      if (explicitBack) {
-        navigateTo(explicitBack);
-      } else {
+
+      const target =
+        button.getAttribute('data-back');
+
+      if (target) {
+        if (
+          target === 'screen-welcome' ||
+          target === 'screen-login' ||
+          target === 'screen-register'
+        ) {
+          navigateTo(target);
+        } else {
+          navigateProtected(target);
+        }
+      } else if (canAccessProtectedScreens()) {
         navigateBack();
       }
     });
   });
 
-  // Dashboard Action Tiles
-  const dashScan = document.getElementById('dash-btn-scan');
-  if (dashScan) {
-    dashScan.addEventListener('click', () => {
-      navigateTo('screen-scanner');
-      startCamera();
+  getField('dash-btn-scan')
+    ?.addEventListener('click', () => {
+      navigateProtected('screen-scanner');
     });
-  }
 
-  const dashStealth = document.getElementById('dash-btn-stealth');
-  if (dashStealth) {
-    dashStealth.addEventListener('click', () => {
+  getField('dash-btn-stealth')
+    ?.addEventListener('click', () => {
+      if (!canAccessProtectedScreens()) return;
+
       navigateTo('screen-stealth');
+
       provideFeedback({
-        text: 'Black Stealth Mode activated. Display is dark. Gestures enabled.',
+        text:
+          'Black Stealth Mode activated. Display is dark.',
         priority: true
       });
     });
-  }
 
-  const dashPractice = document.getElementById('dash-btn-practice');
-  if (dashPractice) {
-    dashPractice.addEventListener('click', () => {
-      navigateTo('screen-practice');
+  getField('dash-btn-practice')
+    ?.addEventListener('click', () => {
+      navigateProtected('screen-practice');
     });
-  }
 
-  const dashTutorial = document.getElementById('dash-btn-tutorial');
-  if (dashTutorial) {
-    dashTutorial.addEventListener('click', () => {
-      navigateTo('screen-tutorial');
+  getField('dash-btn-tutorial')
+    ?.addEventListener('click', () => {
+      navigateProtected('screen-tutorial');
     });
-  }
 
-  const seeAllHistoryBtn = document.getElementById('btn-see-all-history');
-  if (seeAllHistoryBtn) {
-    seeAllHistoryBtn.addEventListener('click', () => {
-      navigateTo('screen-history');
+  getField('btn-see-all-history')
+    ?.addEventListener('click', () => {
+      navigateProtected('screen-history');
     });
-  }
 }
 
-/**
- * 4. Form Interactions & Demonstration Authentication
- */
-function initFormInteractions() {
-  // Welcome / Login Form
-  const formLogin = document.getElementById('form-login');
-  const demoFillBtn = document.getElementById('btn-fill-demo-login');
-  const audioWelcomeBtn = document.getElementById('audio-btn-welcome');
-  const gotoRegBtn = document.getElementById('btn-goto-register');
+/* ============================================================
+   LOGIN, REGISTRATION AND ONBOARDING
+============================================================ */
 
-  if (demoFillBtn) {
-    demoFillBtn.addEventListener('click', () => {
-      const emailInput = document.getElementById('login-email');
-      const passInput = document.getElementById('login-password');
-      if (emailInput) emailInput.value = state.user.email;
-      if (passInput) passInput.value = 'DemoPass2026!';
+function initFormInteractions() {
+  // Each form is declared exactly once.
+  const formLogin = getField('form-login');
+  const formRegister = getField('form-register');
+  const formPinSetup = getField('form-pin-setup');
+
+  /* ---------------- GUARDIAN CONTINUE ---------------- */
+
+  getField('btn-continue-dashboard')
+    ?.addEventListener('click', async () => {
+      if (guardianContinueBusy) return;
+
+      const button =
+        getField('btn-continue-dashboard');
+
+      if (!getStoredToken()) {
+        announceError('Please sign in again.');
+        navigateTo('screen-welcome');
+        return;
+      }
+
+      if (onboardingRequired) {
+        announceError(
+          'Complete your security PIN setup first.'
+        );
+
+        openPinSetup();
+        return;
+      }
+
+      guardianContinueBusy = true;
+      updateGuardianOnboardingUI();
+
+      try {
+        const loaded =
+          await refreshTrustedContacts({
+            silent: true
+          });
+
+        if (!loaded) {
+          announceError(
+            'Unable to verify guardian status with the server. ' +
+            'Please check your connection.'
+          );
+          return;
+        }
+
+        if (!hasVerifiedPrimaryGuardian()) {
+          announceError(
+            'Verify a primary guardian and enable ' +
+            'emergency notifications before continuing.'
+          );
+          return;
+        }
+
+        announceSuccess(
+          'Guardian verified. Opening your PALMLOCK dashboard.'
+        );
+
+        navigateTo('screen-dashboard');
+      } catch (error) {
+        console.error(
+          '[PALMLOCK ONBOARDING]',
+          error
+        );
+
+        announceError(
+          'Unable to complete onboarding. Please retry.'
+        );
+      } finally {
+        guardianContinueBusy = false;
+        updateGuardianOnboardingUI();
+      }
+    });
+
+  /*
+   * contacts.js should dispatch this event after
+   * successfully refreshing MongoDB-backed contacts.
+   *
+   * Example:
+   * document.dispatchEvent(
+   *   new CustomEvent('palmlock:contacts-updated')
+   * );
+   */
+
+  document.addEventListener(
+    'palmlock:contacts-updated',
+    () => {
+      // The event is a UI refresh signal, not proof
+      // that the server has verified the guardian.
+      void refreshTrustedContacts({
+        silent: true
+      });
+    }
+  );
+
+  /* ---------------- DEMO LOGIN FILL ---------------- */
+
+  getField('btn-fill-demo-login')
+    ?.addEventListener('click', () => {
+      const email = getField('login-email');
+
+      if (email) {
+        email.value =
+          state.user?.email || '';
+      }
+
       provideFeedback({
-        text: 'Filled demonstrative user credentials.',
+        text:
+          'Enter the password for your registered account. ' +
+          'Backend authentication is required.',
         hapticPattern: 40
       });
     });
-  }
 
-  if (audioWelcomeBtn) {
-    audioWelcomeBtn.addEventListener('click', () => {
+  getField('audio-btn-welcome')
+    ?.addEventListener('click', () => {
       provideFeedback({
-        text: 'Welcome to PALMLOCK. Touch Beyond Vision. An accessible payment system combining directional audio, haptic vibrations, and gesture PIN security.',
+        text:
+          'Welcome to PALMLOCK. Touch Beyond Vision. ' +
+          'An accessible simulated payment system with ' +
+          'directional gestures, audio and tactile feedback.',
         priority: true
       });
     });
-  }
 
-  if (gotoRegBtn) {
-    gotoRegBtn.addEventListener('click', () => {
+  getField('btn-goto-register')
+    ?.addEventListener('click', () => {
       navigateTo('screen-register');
     });
-  }
 
-  if (formLogin) {
-    formLogin.addEventListener('submit', (e) => {
-      e.preventDefault();
-      const email = document.getElementById('login-email')?.value.trim();
-      const pass = document.getElementById('login-password')?.value;
-      const emailErr = document.getElementById('login-email-error');
-      const passErr = document.getElementById('login-password-error');
+  /* ---------------- LOGIN ---------------- */
 
-      if (emailErr) emailErr.textContent = '';
-      if (passErr) passErr.textContent = '';
+  formLogin?.addEventListener(
+    'submit',
+    async event => {
+      event.preventDefault();
 
-      let hasError = false;
-      if (!email) {
-        if (emailErr) emailErr.textContent = 'Please enter your email or phone number.';
-        hasError = true;
-      }
-      if (!pass || pass.length < 4) {
-        if (passErr) passErr.textContent = 'Please enter your account password.';
-        hasError = true;
-      }
+      if (authBusy) return;
 
-      if (hasError) {
-        provideFeedback({ text: 'Please complete all required login fields.', gesture: 'ERROR' });
+      const email = getValue('login-email');
+
+      const password =
+        getField('login-password')?.value || '';
+
+      showFieldError(
+        'login-email-error',
+        ''
+      );
+
+      showFieldError(
+        'login-password-error',
+        ''
+      );
+
+      if (!email || !password) {
+        if (!email) {
+          showFieldError(
+            'login-email-error',
+            'Please enter your email address.'
+          );
+        }
+
+        if (!password) {
+          showFieldError(
+            'login-password-error',
+            'Please enter your password.'
+          );
+        }
+
+        announceError(
+          'Please complete the login fields.'
+        );
         return;
       }
 
-      // Demonstration sign-in successful
-      provideFeedback({
-        text: `Welcome back, ${state.user.name}. Opening your dashboard.`,
-        gesture: 'SUCCESS',
-        hapticPattern: 100
-      });
-      navigateTo('screen-dashboard');
-    });
-  }
+      authBusy = true;
 
-  // Registration Form
-  const formRegister = document.getElementById('form-register');
-  if (formRegister) {
-    formRegister.addEventListener('submit', (e) => {
-      e.preventDefault();
-      const name = document.getElementById('reg-fullname')?.value.trim();
-      const phone = document.getElementById('reg-phone')?.value.trim();
-      const pass = document.getElementById('reg-password')?.value;
-      const vision = document.getElementById('reg-vision-level')?.value;
+      const submitButton =
+        formLogin.querySelector(
+          'button[type="submit"]'
+        );
 
-      if (!name || !phone || !pass || pass.length < 6) {
-        provideFeedback({
-          text: 'Please check your registration information. Password must be at least 6 characters.',
-          gesture: 'ERROR'
+      setBusy(
+        submitButton,
+        true,
+        'Signing in...'
+      );
+
+      let authenticated = false;
+
+      try {
+        const result = await authRequest(
+          '/auth/login',
+          {
+            email,
+            password
+          }
+        );
+
+        if (
+          !result.ok ||
+          result.data?.success === false
+        ) {
+          throw new Error(
+            result.data?.error ||
+            result.data?.message ||
+            'Login failed.'
+          );
+        }
+
+        const session =
+          extractSession(result.data);
+
+        if (!session.token || !session.user) {
+          throw new Error(
+            'The server did not return a complete login session.'
+          );
+        }
+
+        saveSession(
+          session.token,
+          session.user
+        );
+
+        authenticated = true;
+
+        onboardingRequired =
+          Boolean(session.onboardingRequired);
+
+        updateGuardianOnboardingUI();
+
+        const passwordField =
+          getField('login-password');
+
+        if (passwordField) {
+          passwordField.value = '';
+        }
+
+        await refreshTrustedContacts({
+          silent: true
         });
+
+        if (onboardingRequired) {
+          announceSuccess(
+            'Welcome back. Complete your security PIN setup.'
+          );
+
+          openPinSetup();
+          return;
+        }
+
+        if (!contactsReady) {
+          announceSuccess(
+            'Signed in successfully. Trusted contacts ' +
+            'could not be loaded. Please check your connection.'
+          );
+
+          navigateTo('screen-contacts');
+          return;
+        }
+
+        if (!hasVerifiedPrimaryGuardian()) {
+          announceSuccess(
+            'Welcome back. Please verify a primary ' +
+            'guardian with emergency alerts enabled.'
+          );
+
+          navigateTo('screen-contacts');
+          return;
+        }
+
+        announceSuccess(
+          `Welcome back, ${state.user?.name || 'User'}. ` +
+          'Opening your dashboard.'
+        );
+
+        navigateTo('screen-dashboard');
+      } catch (error) {
+        if (!authenticated) {
+          clearSession();
+        }
+
+        showFieldError(
+          'login-password-error',
+          error.message
+        );
+
+        announceError(error.message);
+      } finally {
+        authBusy = false;
+
+        setBusy(
+          submitButton,
+          false
+        );
+      }
+    }
+  );
+
+  /* ---------------- REGISTRATION ---------------- */
+
+  formRegister?.addEventListener(
+    'submit',
+    async event => {
+      event.preventDefault();
+
+      if (authBusy) return;
+
+      const name =
+        getValue('reg-fullname');
+
+      const phone =
+        getValue('reg-phone');
+
+      const email =
+        getValue('reg-email');
+
+      const password =
+        getField('reg-password')?.value || '';
+
+      const vision =
+        getValue('reg-vision-level');
+
+      if (
+        !name ||
+        !phone ||
+        !email ||
+        password.length < 6
+      ) {
+        announceError(
+          'Please enter your name, phone number, ' +
+          'email address and a password of at least ' +
+          'six characters.'
+        );
         return;
       }
 
-      state.user.name = name;
-      state.user.phone = phone;
-      state.user.visionLevel = vision;
+      authBusy = true;
 
-      provideFeedback({
-        text: `Account profile created for ${name}. Let's configure your sensory preferences.`,
-        gesture: 'SUCCESS'
-      });
-      navigateTo('screen-setup');
+      const submitButton =
+        formRegister.querySelector(
+          'button[type="submit"]'
+        );
+
+      setBusy(
+        submitButton,
+        true,
+        'Creating account...'
+      );
+
+      try {
+        const result = await authRequest(
+          '/auth/register',
+          {
+            name,
+            email,
+            phone,
+            password,
+            visionLevel: vision
+          }
+        );
+
+        if (
+          !result.ok ||
+          result.data?.success === false
+        ) {
+          throw new Error(
+            result.data?.error ||
+            result.data?.message ||
+            'Registration failed.'
+          );
+        }
+
+        const session =
+          extractSession(result.data);
+
+        const passwordField =
+          getField('reg-password');
+
+        if (passwordField) {
+          passwordField.value = '';
+        }
+
+        if (session.token && session.user) {
+          saveSession(
+            session.token,
+            session.user
+          );
+
+          onboardingRequired = true;
+
+          updateGuardianOnboardingUI();
+
+          await refreshTrustedContacts({
+            silent: true
+          });
+
+          navigateTo('screen-setup');
+
+          announceSuccess(
+            `Account created for ${name}. ` +
+            'Configure your accessibility preferences.'
+          );
+        } else {
+          clearSession();
+
+          navigateTo('screen-welcome');
+
+          announceSuccess(
+            'Registration completed. Please sign in to continue.'
+          );
+        }
+      } catch (error) {
+        announceError(error.message);
+      } finally {
+        authBusy = false;
+
+        setBusy(
+          submitButton,
+          false
+        );
+      }
+    }
+  );
+
+  /* ---------------- ACCESSIBILITY SETUP ---------------- */
+
+  getField('btn-save-setup')
+    ?.addEventListener('click', () => {
+      if (!getStoredToken()) {
+        announceError(
+          'Please sign in before configuring security.'
+        );
+
+        navigateTo('screen-welcome');
+        return;
+      }
+
+      const audioToggle =
+        getField('setup-audio-toggle');
+
+      const hapticToggle =
+        getField('setup-haptic-toggle');
+
+      const themeSelect =
+        getField('setup-theme-select');
+
+      if (audioToggle) {
+        state.preferences.speechEnabled =
+          audioToggle.checked;
+      }
+
+      if (hapticToggle) {
+        state.preferences.hapticEnabled =
+          hapticToggle.checked;
+      }
+
+      if (themeSelect?.value) {
+        setTheme(themeSelect.value);
+      }
+
+      announceSuccess(
+        'Accessibility preferences applied. ' +
+        'Now create your normal and emergency security PINs.'
+      );
+
+      openPinSetup();
     });
-  }
 
-  // User Setup Screen
-  const btnSaveSetup = document.getElementById('btn-save-setup');
-  if (btnSaveSetup) {
-    btnSaveSetup.addEventListener('click', () => {
-      const audioToggle = document.getElementById('setup-audio-toggle')?.checked;
-      const hapticToggle = document.getElementById('setup-haptic-toggle')?.checked;
-      const themeSelect = document.getElementById('setup-theme-select')?.value;
+  /* ---------------- SECURITY PIN SETUP ---------------- */
 
-      state.preferences.speechEnabled = audioToggle ?? true;
-      state.preferences.hapticEnabled = hapticToggle ?? true;
-      if (themeSelect) setTheme(themeSelect);
+  formPinSetup?.addEventListener(
+    'submit',
+    async event => {
+      event.preventDefault();
 
-      provideFeedback({
-        text: 'Accessibility profile saved. Navigating to home dashboard.',
-        gesture: 'SUCCESS'
-      });
-      navigateTo('screen-dashboard');
-    });
-  }
+      if (pinSetupBusy) return;
+
+      showFieldError(
+        'pin-setup-error',
+        ''
+      );
+
+      if (!getStoredToken()) {
+        announceError(
+          'Please sign in before setting security PINs.'
+        );
+
+        navigateTo('screen-welcome');
+        return;
+      }
+
+      let pins;
+
+      try {
+        pins = validatePinSetup();
+      } catch (error) {
+        showFieldError(
+          'pin-setup-error',
+          error.message
+        );
+
+        announceError(error.message);
+        return;
+      }
+
+      pinSetupBusy = true;
+
+      const submitButton =
+        getField('btn-submit-pin-setup');
+
+      setBusy(
+        submitButton,
+        true,
+        'Saving PINs securely...'
+      );
+
+      try {
+        const result =
+          await authenticatedRequest(
+            '/pin/setup',
+            {
+              standardPin:
+                pins.standardPin,
+
+              duressPin:
+                pins.duressPin
+            }
+          );
+
+        if (!result.success) {
+          throw new Error(
+            result.error ||
+            'Unable to save security PINs.'
+          );
+        }
+
+        onboardingRequired = false;
+
+        clearPinSetupFields();
+        updateGuardianOnboardingUI();
+
+        announceSuccess(
+          'Both security PINs were saved successfully. ' +
+          'Next, register and verify your trusted contacts.'
+        );
+
+        navigateTo('screen-contacts');
+
+        await refreshTrustedContacts({
+          silent: true
+        });
+      } catch (error) {
+        showFieldError(
+          'pin-setup-error',
+          error.message
+        );
+
+        announceError(error.message);
+
+        if (error.status === 401) {
+          clearSession();
+          clearPinSetupFields();
+
+          navigateTo('screen-welcome');
+        }
+      } finally {
+        pinSetupBusy = false;
+
+        setBusy(
+          submitButton,
+          false
+        );
+      }
+    }
+  );
 }
 
-/**
- * 5. Gesture Recognition Engines (PIN, Practice & Stealth)
- */
+/* ============================================================
+   GESTURE ENGINES
+============================================================ */
+
 function initGestureEngines() {
-  // Main PIN Entry Canvas
-  const pinCanvas = document.getElementById('pin-gesture-canvas');
+  const pinCanvas =
+    getField('pin-gesture-canvas');
+
   if (pinCanvas) {
-    new GestureRecognizer(pinCanvas, (gesture) => {
-      handlePinGesture(gesture);
-    });
+    new GestureRecognizer(
+      pinCanvas,
+      handlePinGesture
+    );
   }
 
-  // Register callback when 4 PIN gestures are completed
-  setPinCompleteCallback((enteredDigits) => {
-    verifyEnteredPin(enteredDigits);
+  setPinCompleteCallback(sequence => {
+    if (!canAccessProtectedScreens()) {
+      clearPinGestures();
+      return;
+    }
+
+    verifyEnteredPin(sequence);
   });
 
-  // Undo & Clear Controls for PIN Entry
-  const pinUndoBtn = document.getElementById('btn-pin-undo');
-  if (pinUndoBtn) {
-    pinUndoBtn.addEventListener('click', () => undoPinGesture());
-  }
+  getField('btn-pin-undo')
+    ?.addEventListener(
+      'click',
+      undoPinGesture
+    );
 
-  const pinClearBtn = document.getElementById('btn-pin-clear');
-  if (pinClearBtn) {
-    pinClearBtn.addEventListener('click', () => clearPinGestures());
-  }
+  getField('btn-pin-clear')
+    ?.addEventListener(
+      'click',
+      clearPinGestures
+    );
 
-  // Accessible numeric buttons for screen readers & direct entry
-  const pinDigitButtons = document.querySelectorAll('.btn-pin-digit');
-  pinDigitButtons.forEach(btn => {
-    btn.addEventListener('click', () => {
-      const gesture = btn.getAttribute('data-gesture');
-      if (gesture) handlePinGesture(gesture);
+  document.querySelectorAll(
+    '.btn-pin-digit'
+  ).forEach(button => {
+    button.addEventListener('click', () => {
+      if (!canAccessProtectedScreens()) {
+        return;
+      }
+
+      const gesture =
+        button.getAttribute('data-gesture');
+
+      if (gesture) {
+        handlePinGesture(gesture);
+      }
     });
   });
 
-  // Opt-in Shake-to-Clear motion gesture
   setupShakeToClear(() => {
     clearPinGestures();
+
     provideFeedback({
-      text: 'Motion shake detected. Gesture PIN slots cleared.',
+      text:
+        'Motion shake detected. PIN slots cleared.',
       gesture: 'ERROR',
       hapticPattern: 60
     });
   });
 
-  const btnSwitchStealth = document.getElementById('btn-switch-to-stealth');
-  if (btnSwitchStealth) {
-    btnSwitchStealth.addEventListener('click', () => {
+  getField('btn-switch-to-stealth')
+    ?.addEventListener('click', () => {
+      if (!canAccessProtectedScreens()) {
+        return;
+      }
+
       navigateTo('screen-stealth');
     });
-  }
 
-  // Stealth Mode Touch Surface
-  const stealthCanvas = document.getElementById('stealth-touch-canvas');
+  const stealthCanvas =
+    getField('stealth-touch-canvas');
+
   if (stealthCanvas) {
-    let lastTapTime = 0;
-    new GestureRecognizer(stealthCanvas, (gesture) => {
-      // Check for double tap to exit stealth mode
-      if (gesture === 'TAP') {
-        const now = Date.now();
-        if (now - lastTapTime < 450) {
-          exitStealthMode();
+    new GestureRecognizer(
+      stealthCanvas,
+      gesture => {
+        if (!getStoredToken()) {
           return;
         }
-        lastTapTime = now;
-      }
 
-      // Enter gesture directly into PIN buffer if a transaction is pending
-      if (state.currentTransaction) {
-        handlePinGesture(gesture);
-      } else {
-        provideFeedback({
-          gesture: gesture,
-          hapticPattern: 60,
-          hapticLabel: `Stealth: ${gesture}`
-        });
+        if (state.currentTransaction) {
+          handlePinGesture(gesture);
+        } else {
+          provideFeedback({
+            gesture,
+            hapticPattern: 60,
+            hapticLabel:
+              `Stealth: ${gesture}`
+          });
+        }
       }
-    });
+    );
   }
 
-  const exitStealthBtn = document.getElementById('btn-exit-stealth');
-  if (exitStealthBtn) {
-    exitStealthBtn.addEventListener('click', () => exitStealthMode());
-  }
+  getField('btn-exit-stealth')
+    ?.addEventListener(
+      'click',
+      exitStealthMode
+    );
 }
 
 function exitStealthMode() {
-  navigateTo('screen-dashboard');
+  clearPinGestures();
+
+  navigateProtected('screen-dashboard');
+
   provideFeedback({
-    text: 'Exited Black Stealth Mode. Display restored.',
+    text:
+      'Exited Black Stealth Mode. Display restored.',
     gesture: 'SUCCESS',
     hapticPattern: 60
   });
 }
 
-/**
- * 6. Scanner Controls & Test Payloads
- */
+/* ============================================================
+   QR SCANNER
+============================================================ */
+
 function initScannerControls() {
-  const torchBtn = document.getElementById('btn-toggle-camera-torch');
-  if (torchBtn) {
-    torchBtn.addEventListener('click', () => toggleTorch());
-  }
+  getField('btn-toggle-camera-torch')
+    ?.addEventListener(
+      'click',
+      toggleTorch
+    );
 
-  const simulateBtns = document.querySelectorAll('.btn-simulate-qr');
-  simulateBtns.forEach(btn => {
-    btn.addEventListener('click', () => {
-      const merchant = btn.getAttribute('data-merchant');
-      const amount = btn.getAttribute('data-amount');
-      const fee = btn.getAttribute('data-fee');
-      const category = btn.getAttribute('data-category');
+  document.querySelectorAll(
+    '.btn-simulate-qr'
+  ).forEach(button => {
+    button.addEventListener('click', () => {
+      if (!canAccessProtectedScreens()) {
+        return;
+      }
 
-      simulateScannedQR({ merchant, amount, fee, category });
+      simulateScannedQR({
+        merchant:
+          button.getAttribute('data-merchant'),
+
+        amount:
+          button.getAttribute('data-amount'),
+
+        fee:
+          button.getAttribute('data-fee'),
+
+        category:
+          button.getAttribute('data-category')
+      });
     });
   });
 
-  const manualDecodeBtn = document.getElementById('btn-decode-manual-qr');
-  if (manualDecodeBtn) {
-    manualDecodeBtn.addEventListener('click', () => {
-      const input = document.getElementById('input-manual-qr');
-      const rawText = input ? input.value.trim() : '';
-      if (rawText) {
-        onQRCodeLocked(rawText);
+  getField('btn-decode-manual-qr')
+    ?.addEventListener('click', () => {
+      if (!canAccessProtectedScreens()) {
+        return;
+      }
+
+      const raw =
+        getValue('input-manual-qr');
+
+      if (raw) {
+        onQRCodeLocked(raw);
       } else {
-        provideFeedback({
-          text: 'Please paste or enter a QR text payload to decode.',
-          gesture: 'ERROR'
-        });
+        announceError(
+          'Please enter a QR payload to decode.'
+        );
       }
     });
-  }
 }
 
-/**
- * 7. Payment Verification Actions & Result Screen
- */
+/* ============================================================
+   PAYMENT CONTROLS
+============================================================ */
+
 function initPaymentActions() {
-  const readDetailsBtn = document.getElementById('btn-read-payment-details');
-  if (readDetailsBtn) {
-    readDetailsBtn.addEventListener('click', () => readPaymentDetails());
-  }
+  getField('btn-read-payment-details')
+    ?.addEventListener(
+      'click',
+      readPaymentDetails
+    );
 
-  // Tactile Currency Verification Controls (Priority 2)
-  const playVibrateBtn = document.getElementById('btn-play-currency-vibrate');
-  if (playVibrateBtn) {
-    playVibrateBtn.addEventListener('click', () => playTactileCurrencyPattern());
-  }
+  getField('btn-play-currency-vibrate')
+    ?.addEventListener('click', () => {
+      playTactileCurrencyPattern();
+    });
 
-  const stopVibrateBtn = document.getElementById('btn-stop-currency-vibrate');
-  if (stopVibrateBtn) {
-    stopVibrateBtn.addEventListener('click', () => stopTactileCurrencyPattern());
-  }
+  getField('btn-stop-currency-vibrate')
+    ?.addEventListener(
+      'click',
+      stopTactileCurrencyPattern
+    );
 
-  const repeatVibrateBtn = document.getElementById('btn-repeat-currency-vibrate');
-  if (repeatVibrateBtn) {
-    repeatVibrateBtn.addEventListener('click', () => repeatTactileCurrencyPattern());
-  }
+  getField('btn-repeat-currency-vibrate')
+    ?.addEventListener(
+      'click',
+      repeatTactileCurrencyPattern
+    );
 
-  const proceedPinBtn = document.getElementById('btn-proceed-to-pin');
-  if (proceedPinBtn) {
-    proceedPinBtn.addEventListener('click', () => {
+  getField('btn-proceed-to-pin')
+    ?.addEventListener('click', () => {
+      if (!canAccessProtectedScreens()) {
+        return;
+      }
+
       clearPinGestures();
+
       navigateTo('screen-gesture-pin');
+
       provideFeedback({
-        text: 'Enter your 4-gesture PIN. Swipe Up, Down, Left, Right or Tap.',
+        text:
+          'Enter your four-gesture PIN.',
         priority: true
       });
     });
-  }
 
-  const cancelPayBtn = document.getElementById('btn-cancel-payment');
-  if (cancelPayBtn) {
-    cancelPayBtn.addEventListener('click', () => {
+  getField('btn-cancel-payment')
+    ?.addEventListener('click', () => {
+      clearPinGestures();
+
       provideFeedback({
         text: 'Transaction cancelled.',
         gesture: 'ERROR',
         hapticPattern: 60
       });
-      navigateTo('screen-dashboard');
-    });
-  }
 
-  // Result Screen Buttons
-  const resultDoneBtn = document.getElementById('btn-result-done');
-  if (resultDoneBtn) {
-    resultDoneBtn.addEventListener('click', () => {
-      navigateTo('screen-dashboard');
+      navigateProtected('screen-dashboard');
     });
-  }
 
-  const resultRetryBtn = document.getElementById('btn-result-retry');
-  if (resultRetryBtn) {
-    resultRetryBtn.addEventListener('click', () => {
+  getField('btn-result-done')
+    ?.addEventListener('click', () => {
+      navigateProtected('screen-dashboard');
+    });
+
+  getField('btn-result-retry')
+    ?.addEventListener('click', () => {
+      if (!canAccessProtectedScreens()) {
+        return;
+      }
+
       clearPinGestures();
       navigateTo('screen-gesture-pin');
     });
-  }
 
-  const resultCancelBtn = document.getElementById('btn-result-cancel');
-  if (resultCancelBtn) {
-    resultCancelBtn.addEventListener('click', () => {
-      navigateTo('screen-dashboard');
+  getField('btn-result-cancel')
+    ?.addEventListener('click', () => {
+      navigateProtected('screen-dashboard');
     });
-  }
 
-  // History Filter
-  const historyFilter = document.getElementById('history-filter-select');
-  if (historyFilter) {
-    historyFilter.addEventListener('change', (e) => {
-      renderHistoryList(e.target.value);
+  getField('history-filter-select')
+    ?.addEventListener('change', event => {
+      renderHistoryList(
+        event.target.value
+      );
     });
-  }
 }
 
-/**
- * 8. Practice Lab Canvas & Controls
- */
-function initPracticeLab() {
-  const practiceCanvas = document.getElementById('practice-gesture-canvas');
-  const detectedText = document.getElementById('practice-detected-text');
+/* ============================================================
+   GESTURE PRACTICE LAB
+============================================================ */
 
-  if (practiceCanvas) {
-    new GestureRecognizer(practiceCanvas, (gesture) => {
-      const digit = GESTURE_TO_DIGIT[gesture] !== undefined ? GESTURE_TO_DIGIT[gesture] : '';
-      if (detectedText) {
-        detectedText.textContent = `Detected: ${gesture} (Digit ${digit})`;
+function initPracticeLab() {
+  const canvas =
+    getField('practice-gesture-canvas');
+
+  const detectedText =
+    getField('practice-detected-text');
+
+  if (canvas) {
+    new GestureRecognizer(
+      canvas,
+      gesture => {
+        const digit =
+          GESTURE_TO_DIGIT[gesture] ?? '';
+
+        if (detectedText) {
+          detectedText.textContent =
+            `Detected: ${gesture} (Digit ${digit})`;
+        }
+
+        provideFeedback({
+          text:
+            `${gesture}, Digit ${digit}`,
+
+          gesture,
+
+          hapticPattern:
+            gesture === 'TAP' ||
+            gesture === 'SINGLE_TAP'
+              ? 40
+              : 80,
+
+          hapticLabel:
+            `Practiced: ${gesture}`,
+
+          priority: true
+        });
       }
+    );
+  }
+
+  getField('btn-practice-reset')
+    ?.addEventListener('click', () => {
+      if (detectedText) {
+        detectedText.textContent =
+          'Swipe or Tap Inside Box';
+      }
+
       provideFeedback({
-        text: `${gesture}, Digit ${digit}`,
-        gesture: gesture,
-        hapticPattern: gesture === 'TAP' || gesture === 'SINGLE_TAP' ? 40 : 80,
-        hapticLabel: `Practiced: ${gesture} (Digit ${digit})`,
+        text:
+          'Practice log reset.'
+      });
+    });
+
+  getField('btn-practice-test-pin')
+    ?.addEventListener('click', () => {
+      // Practice must never authorize a payment.
+
+      provideFeedback({
+        text:
+          'Practice mode is available in the gesture box. ' +
+          'Real PIN verification is not part of this practice test.',
         priority: true
       });
     });
-  }
-
-  const resetBtn = document.getElementById('btn-practice-reset');
-  if (resetBtn) {
-    resetBtn.addEventListener('click', () => {
-      if (detectedText) detectedText.textContent = 'Swipe or Tap Inside Box';
-      provideFeedback({ text: 'Practice log reset.' });
-    });
-  }
-
-  const testPinBtn = document.getElementById('btn-practice-test-pin');
-  if (testPinBtn) {
-    testPinBtn.addEventListener('click', () => {
-      clearPinGestures();
-      navigateTo('screen-gesture-pin');
-    });
-  }
 }
 
-/**
- * 9. Settings Screen Controls
- */
+/* ============================================================
+   SETTINGS
+============================================================ */
+
 function initSettingsControls() {
-  const speechToggle = document.getElementById('settings-speech-toggle');
+  const speechToggle =
+    getField('settings-speech-toggle');
+
   if (speechToggle) {
-    speechToggle.checked = state.preferences.speechEnabled;
-    speechToggle.addEventListener('change', (e) => {
-      state.preferences.speechEnabled = e.target.checked;
-      const topBtn = document.getElementById('btn-toggle-speech');
-      if (topBtn) topBtn.setAttribute('aria-pressed', e.target.checked.toString());
-      provideFeedback({
-        text: `Speech synthesis ${e.target.checked ? 'enabled' : 'disabled'}`
-      });
-    });
+    speechToggle.checked =
+      state.preferences.speechEnabled;
+
+    speechToggle.addEventListener(
+      'change',
+      event => {
+        const enabled =
+          event.target.checked;
+
+        state.preferences.speechEnabled =
+          enabled;
+
+        getField('btn-toggle-speech')
+          ?.setAttribute(
+            'aria-pressed',
+            String(enabled)
+          );
+
+        provideFeedback({
+          text:
+            `Speech synthesis ${enabled ? 'enabled' : 'disabled'}`
+        });
+      }
+    );
   }
 
-  const rateSlider = document.getElementById('settings-speech-rate');
-  const rateLabel = document.getElementById('speech-rate-label');
+  const rateSlider =
+    getField('settings-speech-rate');
+
+  const rateLabel =
+    getField('speech-rate-label');
+
   if (rateSlider) {
-    rateSlider.value = state.preferences.speechRate.toString();
-    rateSlider.addEventListener('input', (e) => {
-      const val = parseFloat(e.target.value);
-      state.preferences.speechRate = val;
-      if (rateLabel) rateLabel.textContent = `${val.toFixed(1)}x`;
-    });
-    rateSlider.addEventListener('change', (e) => {
-      provideFeedback({
-        text: `Speech speed set to ${e.target.value} times.`
-      });
-    });
+    rateSlider.value =
+      String(state.preferences.speechRate);
+
+    rateSlider.addEventListener(
+      'input',
+      event => {
+        const value =
+          Number(event.target.value);
+
+        state.preferences.speechRate =
+          value;
+
+        if (rateLabel) {
+          rateLabel.textContent =
+            `${value.toFixed(1)}x`;
+        }
+      }
+    );
+
+    rateSlider.addEventListener(
+      'change',
+      event => {
+        provideFeedback({
+          text:
+            `Speech speed set to ${event.target.value} times.`
+        });
+      }
+    );
   }
 
-  const vibrateToggle = document.getElementById('settings-vibrate-toggle');
+  const vibrateToggle =
+    getField('settings-vibrate-toggle');
+
   if (vibrateToggle) {
-    vibrateToggle.checked = state.preferences.hapticEnabled;
-    vibrateToggle.addEventListener('change', (e) => {
-      state.preferences.hapticEnabled = e.target.checked;
-      provideFeedback({
-        text: `Tactile vibrations ${e.target.checked ? 'enabled' : 'disabled'}`,
-        hapticPattern: 60
-      });
-    });
+    vibrateToggle.checked =
+      state.preferences.hapticEnabled;
+
+    vibrateToggle.addEventListener(
+      'change',
+      event => {
+        const enabled =
+          event.target.checked;
+
+        state.preferences.hapticEnabled =
+          enabled;
+
+        provideFeedback({
+          text:
+            `Tactile vibrations ${enabled ? 'enabled' : 'disabled'}`,
+          hapticPattern: 60
+        });
+      }
+    );
   }
 
-  const themeSelect = document.getElementById('settings-theme-select');
+  const themeSelect =
+    getField('settings-theme-select');
+
   if (themeSelect) {
-    themeSelect.value = state.preferences.theme;
-    themeSelect.addEventListener('change', (e) => {
-      setTheme(e.target.value);
-    });
+    themeSelect.value =
+      state.preferences.theme;
+
+    themeSelect.addEventListener(
+      'change',
+      event => {
+        setTheme(event.target.value);
+      }
+    );
   }
 
-  const fontSelect = document.getElementById('settings-font-select');
+  const fontSelect =
+    getField('settings-font-select');
+
   if (fontSelect) {
-    fontSelect.value = state.preferences.fontSize;
-    fontSelect.addEventListener('change', (e) => {
-      setFontSize(e.target.value);
-    });
+    fontSelect.value =
+      state.preferences.fontSize;
+
+    fontSelect.addEventListener(
+      'change',
+      event => {
+        setFontSize(event.target.value);
+      }
+    );
   }
 
-  const manageContactsBtn = document.getElementById('btn-manage-contacts-from-settings');
-  if (manageContactsBtn) {
-    manageContactsBtn.addEventListener('click', () => {
-      navigateTo('screen-contacts');
+  getField('btn-manage-contacts-from-settings')
+    ?.addEventListener('click', () => {
+      void openContactsScreen();
     });
-  }
 }
 
-/**
- * 10. Global Keyboard Shortcuts for Accessible Power Users
- */
+/* ============================================================
+   GLOBAL KEYBOARD SHORTCUTS
+============================================================ */
+
 function initGlobalKeyboardShortcuts() {
-  document.addEventListener('keydown', (e) => {
-    // Only handle Alt key combos or Escape
-    if (e.altKey) {
-      switch (e.key.toLowerCase()) {
-        case 's': // Alt + S: Toggle Stealth Mode
-          e.preventDefault();
-          if (state.isStealthActive) {
-            exitStealthMode();
-          } else {
-            navigateTo('screen-stealth');
-          }
-          break;
-        case 'q': // Alt + Q: Open QR Scanner
-          e.preventDefault();
-          navigateTo('screen-scanner');
-          startCamera();
-          break;
-        case 'h': // Alt + H: Return Home
-          e.preventDefault();
-          stopCamera();
-          navigateTo('screen-dashboard');
-          break;
-        case 't': // Alt + T: Cycle Theme
-          e.preventDefault();
-          cycleTheme();
-          break;
-      }
-    } else if (e.key === 'Escape') {
-      // Escape closes active modal or exits stealth
-      const activeModal = document.querySelector('.modal-overlay.active');
-      if (activeModal) {
-        activeModal.classList.remove('active');
-        activeModal.setAttribute('aria-hidden', 'true');
-      } else if (state.isStealthActive) {
-        exitStealthMode();
+  document.addEventListener(
+    'keydown',
+    event => {
+      const target =
+        event.target;
+
+      const isTyping =
+        target instanceof HTMLElement &&
+        (
+          target.matches(
+            'input, textarea, select'
+          ) ||
+          target.isContentEditable
+        );
+
+      if (event.altKey && !isTyping) {
+        switch (event.key.toLowerCase()) {
+          case 's':
+            event.preventDefault();
+
+            if (!canAccessProtectedScreens()) {
+              return;
+            }
+
+            if (state.isStealthActive) {
+              exitStealthMode();
+            } else {
+              navigateTo('screen-stealth');
+            }
+            break;
+
+          case 'q':
+            event.preventDefault();
+
+            navigateProtected(
+              'screen-scanner'
+            );
+            break;
+
+          case 'h':
+            event.preventDefault();
+
+            navigateProtected(
+              'screen-dashboard'
+            );
+            break;
+
+          case 't':
+            event.preventDefault();
+
+            cycleTheme();
+            break;
+        }
+      } else if (event.key === 'Escape') {
+        const activeModal =
+          document.querySelector(
+            '.modal-overlay.active'
+          );
+
+        if (activeModal) {
+          activeModal.classList.remove(
+            'active'
+          );
+
+          activeModal.setAttribute(
+            'aria-hidden',
+            'true'
+          );
+        } else if (state.isStealthActive) {
+          exitStealthMode();
+        }
       }
     }
-  });
+  );
 }

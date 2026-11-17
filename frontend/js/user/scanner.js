@@ -1,64 +1,254 @@
+
 /**
- * PALMLOCK — Touch Beyond Vision
- * Directional QR Scanner with Real BarcodeDetector Decoding & Bounding-Box Centering Guidance
- * Supports Indian Payment Standards (INR ₹, UPI strings, PALMLOCK Secure JSON Payloads)
+ * PALMLOCK — Accessible QR Scanner
+ *
+ * Native BarcodeDetector QR decoding, directional guidance,
+ * strict INR amount parsing and simulated merchant payments.
+ *
+ * QR parsing is NOT merchant authentication.
+ * All payment operations remain simulated.
  */
 
 import { state } from './state.js';
-import { provideFeedback, playGestureAudio, speak } from './accessibility.js';
+import {
+  provideFeedback,
+  playGestureAudio
+} from './accessibility.js';
 import { navigateTo } from './navigation.js';
 import { setPendingTransaction } from './payments.js';
 import { INDIAN_MERCHANTS } from '../shared/demoData.js';
+
+const CENTER_TOLERANCE_RATIO = 0.15;
+const SPEECH_DEBOUNCE_MS = 2400;
+const SCAN_INTERVAL_MS = 180;
+const MAX_PAYMENT = 100000;
 
 let videoStream = null;
 let scanAnimationId = null;
 let barcodeDetector = null;
 let isTorchOn = false;
 let isScanningActive = false;
+let scanSession = 0;
+let lastDetectionTime = 0;
 let lastSpokenGuidanceTime = 0;
 let lastSpokenDirection = '';
-let processedHashes = new Set();
-let canvasElement = null;
-let canvasCtx = null;
+let scanLocked = false;
+let lastProcessedPayload = '';
+let lastProcessedAt = 0;
 
-// Directional tolerances (deadband around viewport center, 15% margin)
-const CENTER_TOLERANCE_RATIO = 0.15;
-const SPEECH_DEBOUNCE_MS = 2400; // Minimum interval between repetitive spoken directions
+function el(id) {
+  return document.getElementById(id);
+}
 
-/**
- * Initialize Camera Stream and Start Real QR Decoder
- */
-export async function startCamera() {
-  const videoEl = document.getElementById('scanner-video-feed');
-  const statusEl = document.getElementById('guidance-heading');
-  const instructionEl = document.getElementById('scanner-guidance-instruction');
+function feedback(text, success = false) {
+  provideFeedback({
+    text,
+    gesture: success ? 'SUCCESS' : 'ERROR',
+    priority: true
+  });
+}
 
-  if (!videoEl) return;
+function setGuidance(
+  heading,
+  instruction,
+  subtext = '',
+  icon = '🔍'
+) {
+  const headingEl = el('guidance-heading');
+  const instructionEl =
+    el('scanner-guidance-instruction');
+  const subtextEl =
+    el('scanner-guidance-subtext');
+  const iconEl = el('guidance-icon');
 
-  isScanningActive = true;
+  if (headingEl) headingEl.textContent = heading;
+  if (instructionEl) {
+    instructionEl.textContent = instruction;
+  }
+  if (subtextEl) subtextEl.textContent = subtext;
+  if (iconEl) iconEl.textContent = icon;
+}
 
-  // Initialize BarcodeDetector API if supported by browser (Chromium/Android Chrome)
-  if ('BarcodeDetector' in window) {
-    try {
-      const formats = await BarcodeDetector.getSupportedFormats();
-      if (formats.includes('qr_code')) {
-        barcodeDetector = new BarcodeDetector({ formats: ['qr_code'] });
-        console.info('PALMLOCK: Native BarcodeDetector initialized for QR codes.');
-      }
-    } catch (e) {
-      console.warn('BarcodeDetector format check error:', e);
-    }
+function generateReference(prefix) {
+  const random = globalThis.crypto?.randomUUID?.()
+    ?.replace(/-/g, '')
+    ?.slice(0, 16)
+    ?.toUpperCase();
+
+  return `${prefix}-${random || (
+    Date.now().toString(36) +
+    Math.random().toString(36).slice(2, 10)
+  ).toUpperCase()}`;
+}
+
+function parseMoney(value, allowZero = false) {
+  const text = String(value ?? '').trim();
+
+  if (!/^\d+(?:\.\d{1,2})?$/.test(text)) {
+    return null;
   }
 
-  // Setup offscreen canvas for frame sampling fallback
-  if (!canvasElement) {
-    canvasElement = document.createElement('canvas');
-    canvasCtx = canvasElement.getContext('2d', { willReadFrequently: true });
+  const amount = Number(text);
+
+  if (
+    !Number.isFinite(amount) ||
+    amount > MAX_PAYMENT ||
+    (allowZero ? amount < 0 : amount <= 0)
+  ) {
+    return null;
+  }
+
+  return Math.round(amount * 100) / 100;
+}
+
+function cleanText(value, maxLength = 120) {
+  return String(value ?? '')
+    .trim()
+    .slice(0, maxLength);
+}
+
+function findDemoMerchant(name) {
+  if (!Array.isArray(INDIAN_MERCHANTS)) {
+    return null;
+  }
+
+  return INDIAN_MERCHANTS.find(
+    merchant =>
+      String(merchant.name || '')
+        .trim()
+        .toLowerCase() ===
+      String(name || '')
+        .trim()
+        .toLowerCase()
+  ) || null;
+}
+
+function createTransaction({
+  merchantName,
+  amount,
+  fee = 0,
+  category = 'General',
+  source = 'demo',
+  paymentAddress = null,
+  merchantId = null
+}) {
+  const total = Math.round(
+    (amount + fee) * 100
+  ) / 100;
+
+  if (
+    !merchantName ||
+    !Number.isFinite(total) ||
+    total > MAX_PAYMENT
+  ) {
+    return {
+      valid: false,
+      error: 'Invalid merchant or payment total.'
+    };
+  }
+
+  const demoMerchant = findDemoMerchant(merchantName);
+
+  return {
+    valid: true,
+    data: {
+      merchantName,
+      merchantId,
+      paymentAddress,
+      category:
+        category ||
+        demoMerchant?.category ||
+        'General',
+      amount,
+      fee,
+      total,
+      currency: 'INR',
+      currencySymbol: '₹',
+      qrHash: generateReference('QR'),
+      referenceId: generateReference('TX'),
+      paymentRequestId: generateReference('REQ'),
+      timestamp: new Date().toISOString(),
+      qrSource: source,
+
+      // This is only a local demo-data match.
+      // It is NOT cryptographic or backend verification.
+      isVerified: false,
+      isDemoMerchant: Boolean(demoMerchant),
+      simulationOnly: true
+    }
+  };
+}
+
+/* ============================================================
+   CAMERA STARTUP
+============================================================ */
+
+export async function startCamera() {
+  stopCamera();
+
+  const videoEl = el('scanner-video-feed');
+
+  if (!videoEl) {
+    console.warn(
+      '[PALMLOCK SCANNER] Video element missing.'
+    );
+    return;
+  }
+
+  const session = ++scanSession;
+  isScanningActive = true;
+  scanLocked = false;
+  lastDetectionTime = 0;
+  lastSpokenDirection = '';
+  lastSpokenGuidanceTime = 0;
+  barcodeDetector = null;
+
+  setGuidance(
+    'Starting Camera',
+    'Requesting camera access...',
+    'Point your camera towards a payment QR code.',
+    '📷'
+  );
+
+  if (
+    !navigator.mediaDevices ||
+    !navigator.mediaDevices.getUserMedia
+  ) {
+    handleCameraUnavailable(
+      'Camera access is unavailable. Use a secure browser context such as HTTPS or localhost.'
+    );
+    return;
   }
 
   try {
-    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-      videoStream = await navigator.mediaDevices.getUserMedia({
+    if ('BarcodeDetector' in window) {
+      try {
+        const formats =
+          await window.BarcodeDetector.getSupportedFormats();
+
+        if (formats.includes('qr_code')) {
+          barcodeDetector =
+            new window.BarcodeDetector({
+              formats: ['qr_code']
+            });
+        }
+      } catch (error) {
+        console.warn(
+          '[PALMLOCK SCANNER] Decoder unavailable:',
+          error
+        );
+      }
+    }
+
+    if (
+      session !== scanSession ||
+      !isScanningActive
+    ) {
+      return;
+    }
+
+    const stream =
+      await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: { ideal: 'environment' },
           width: { ideal: 1280 },
@@ -67,492 +257,699 @@ export async function startCamera() {
         audio: false
       });
 
-      videoEl.srcObject = videoStream;
-      await videoEl.play();
-
-      provideFeedback({
-        text: 'Camera active. Point your phone at the merchant QR code. Audio tones will guide your aim.',
-        priority: true
-      });
-
-      // Start the frame inspection loop
-      runDecodingLoop();
-    } else {
-      handleCameraUnavailable('MediaDevices API not supported on this browser.');
+    if (
+      session !== scanSession ||
+      !isScanningActive
+    ) {
+      stream.getTracks().forEach(track => track.stop());
+      return;
     }
-  } catch (err) {
-    console.warn('Live camera permission denied or unavailable:', err);
-    handleCameraUnavailable(err.name === 'NotAllowedError' 
-      ? 'Camera access denied by user. You can test with demonstration codes below.'
-      : 'Camera device unavailable. Operating in test demonstration mode.');
+
+    videoStream = stream;
+    isTorchOn = false;
+
+    videoEl.srcObject = stream;
+    videoEl.setAttribute('playsinline', '');
+
+    await videoEl.play();
+
+    if (
+      session !== scanSession ||
+      !isScanningActive
+    ) {
+      return;
+    }
+
+    if (!barcodeDetector) {
+      setGuidance(
+        'Camera Active — Decoder Unavailable',
+        'This browser does not support native QR decoding.',
+        'Use the demonstration QR options below.',
+        '📷'
+      );
+
+      feedback(
+        'Camera is active, but QR decoding is not supported on this browser. Use the demonstration options.'
+      );
+      return;
+    }
+
+    setGuidance(
+      'Searching for QR Code',
+      'Slowly point your camera towards the QR code.',
+      'Audio and vibration will guide alignment.',
+      '🔍'
+    );
+
+    provideFeedback({
+      text:
+        'Camera active. Point towards a merchant QR code. ' +
+        'Follow the directional audio instructions.',
+      priority: true
+    });
+
+    void runDecodingLoop(session);
+  } catch (error) {
+    if (session !== scanSession) return;
+
+    const message =
+      error.name === 'NotAllowedError'
+        ? 'Camera permission denied. Enable camera access or use a demonstration QR.'
+        : error.name === 'NotFoundError'
+          ? 'No camera was found on this device.'
+          : 'Unable to start camera. Use a demonstration QR instead.';
+
+    handleCameraUnavailable(message);
   }
 }
 
-/**
- * Stop active camera stream and cancel decoding loops
- */
+/* ============================================================
+   CAMERA STOP
+============================================================ */
+
 export function stopCamera() {
   isScanningActive = false;
-  if (scanAnimationId) {
+  scanSession++;
+
+  if (scanAnimationId !== null) {
     cancelAnimationFrame(scanAnimationId);
     scanAnimationId = null;
   }
+
   if (videoStream) {
-    videoStream.getTracks().forEach(track => track.stop());
+    videoStream.getTracks().forEach(
+      track => track.stop()
+    );
     videoStream = null;
   }
+
+  const videoEl = el('scanner-video-feed');
+
+  if (videoEl) {
+    videoEl.pause();
+    videoEl.srcObject = null;
+  }
+
+  isTorchOn = false;
 }
 
-/**
- * Handle Camera Denial / Device Inaccessibility
- */
 function handleCameraUnavailable(message) {
-  isScanningActive = false;
-  const headingEl = document.getElementById('guidance-heading');
-  const instructionEl = document.getElementById('scanner-guidance-instruction');
-  const subtextEl = document.getElementById('scanner-guidance-subtext');
+  stopCamera();
 
-  if (headingEl) headingEl.textContent = 'Camera Inactive / Demo Mode';
-  if (instructionEl) instructionEl.textContent = message;
-  if (subtextEl) subtextEl.textContent = 'Use the preset test codes below or enter a test payload.';
+  setGuidance(
+    'Camera Inactive / Demo Mode',
+    message,
+    'You can continue with a simulated merchant QR.',
+    '📷'
+  );
 
-  provideFeedback({
-    text: message,
-    gesture: 'ERROR',
-    hapticPattern: [100, 50, 100],
-    priority: true
-  });
+  feedback(message);
 }
 
-/**
- * Continuous QR Detection & Directional Tracking Loop
- */
-async function runDecodingLoop() {
-  if (!isScanningActive || state.currentScreen !== 'screen-scanner') {
+/* ============================================================
+   QR DECODING LOOP
+============================================================ */
+
+async function runDecodingLoop(session) {
+  if (
+    !isScanningActive ||
+    scanLocked ||
+    session !== scanSession ||
+    state.currentScreen !== 'screen-scanner'
+  ) {
     return;
   }
 
-  const videoEl = document.getElementById('scanner-video-feed');
+  const videoEl = el('scanner-video-feed');
 
-  if (videoEl && videoEl.readyState === videoEl.HAVE_ENOUGH_DATA) {
-    if (barcodeDetector) {
-      try {
-        const barcodes = await barcodeDetector.detect(videoEl);
-        if (barcodes && barcodes.length > 0) {
-          handleDetectedBarcode(barcodes[0], videoEl.videoWidth, videoEl.videoHeight);
-        } else {
-          // No barcode detected in this frame
-          updateGuidanceSearching();
-        }
-      } catch (err) {
-        // Detection frame failure
+  const now = performance.now();
+
+  if (
+    barcodeDetector &&
+    videoEl &&
+    videoEl.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA &&
+    now - lastDetectionTime >= SCAN_INTERVAL_MS
+  ) {
+    lastDetectionTime = now;
+
+    try {
+      const barcodes =
+        await barcodeDetector.detect(videoEl);
+
+      if (
+        session !== scanSession ||
+        !isScanningActive ||
+        scanLocked
+      ) {
+        return;
       }
-    } else {
-      // Fallback: BarcodeDetector not available in this browser (e.g. desktop Firefox)
-      // Provide honest status in the UI
-      updateGuidanceFallbackNoDetector();
+
+      if (barcodes.length > 0) {
+        handleDetectedBarcode(
+          barcodes[0],
+          videoEl.videoWidth,
+          videoEl.videoHeight
+        );
+      } else {
+        updateGuidanceSearching();
+      }
+    } catch (error) {
+      console.debug(
+        '[PALMLOCK SCANNER] Frame decode failed:',
+        error.message
+      );
     }
   }
 
-  if (isScanningActive && state.currentScreen === 'screen-scanner') {
-    scanAnimationId = requestAnimationFrame(runDecodingLoop);
+  if (
+    session === scanSession &&
+    isScanningActive &&
+    !scanLocked &&
+    state.currentScreen === 'screen-scanner'
+  ) {
+    scanAnimationId =
+      requestAnimationFrame(
+        () => void runDecodingLoop(session)
+      );
   }
 }
 
-/**
- * Evaluate Bounding Box Geometry and Give Directional Audio & Haptic Feedback
- */
-function handleDetectedBarcode(barcode, frameWidth, frameHeight) {
-  const rawValue = barcode.rawValue || barcode.data || '';
-  if (!rawValue) return;
+/* ============================================================
+   DIRECTIONAL ALIGNMENT
+============================================================ */
+
+function handleDetectedBarcode(
+  barcode,
+  frameWidth,
+  frameHeight
+) {
+  const rawValue =
+    barcode.rawValue || barcode.data || '';
+
+  if (!rawValue || scanLocked) return;
 
   const box = barcode.boundingBox;
-  if (!box) {
-    // Decoder did not provide bounding box
+
+  if (
+    !box ||
+    !frameWidth ||
+    !frameHeight
+  ) {
     onQRCodeLocked(rawValue);
     return;
   }
 
-  // Calculate Centers
-  const qrCenterX = box.x + box.width / 2;
-  const qrCenterY = box.y + box.height / 2;
-  const targetCenterX = frameWidth / 2;
-  const targetCenterY = frameHeight / 2;
+  const centerX =
+    box.x + box.width / 2;
 
-  const deltaX = qrCenterX - targetCenterX;
-  const deltaY = qrCenterY - targetCenterY;
+  const centerY =
+    box.y + box.height / 2;
 
-  const toleranceX = frameWidth * CENTER_TOLERANCE_RATIO;
-  const toleranceY = frameHeight * CENTER_TOLERANCE_RATIO;
+  const deltaX =
+    centerX - frameWidth / 2;
 
-  const isCenteredX = Math.abs(deltaX) <= toleranceX;
-  const isCenteredY = Math.abs(deltaY) <= toleranceY;
+  const deltaY =
+    centerY - frameHeight / 2;
 
-  const headingEl = document.getElementById('guidance-heading');
-  const iconEl = document.getElementById('guidance-icon');
-  const instructionEl = document.getElementById('scanner-guidance-instruction');
-  const subtextEl = document.getElementById('scanner-guidance-subtext');
+  const toleranceX =
+    frameWidth * CENTER_TOLERANCE_RATIO;
 
-  if (isCenteredX && isCenteredY) {
-    // Centered & Aligned! Lock and process
-    if (headingEl) headingEl.textContent = 'QR Code Aligned & Locked!';
-    if (iconEl) iconEl.textContent = '🎯';
-    if (instructionEl) instructionEl.textContent = 'Hold steady. Cryptographic signature confirmed.';
-    if (subtextEl) subtextEl.textContent = 'Reading payment details...';
+  const toleranceY =
+    frameHeight * CENTER_TOLERANCE_RATIO;
+
+  const centeredX =
+    Math.abs(deltaX) <= toleranceX;
+
+  const centeredY =
+    Math.abs(deltaY) <= toleranceY;
+
+  if (centeredX && centeredY) {
+    setGuidance(
+      'QR Code Aligned',
+      'QR code centered. Reading payment details.',
+      'Checking QR format...',
+      '🎯'
+    );
 
     playGestureAudio('SUCCESS');
+
     provideFeedback({
-      text: 'QR code aligned. Decoding payment details.',
+      text: 'QR code centered and decoded.',
       hapticPattern: [120, 80, 150],
-      hapticLabel: 'QR Aligned & Centered',
       priority: true
     });
 
     onQRCodeLocked(rawValue);
-  } else {
-    // Compute directional correction needed
-    // If QR is to the left (deltaX < 0), user needs to move camera left to center it
-    let dirText = '';
-    let icon = '↔️';
-    let haptic = [40, 80];
-
-    if (!isCenteredX && !isCenteredY) {
-      if (deltaX < 0 && deltaY < 0) {
-        dirText = 'Move camera slightly up and left';
-        icon = '↖️';
-        haptic = [40, 30, 40];
-      } else if (deltaX > 0 && deltaY < 0) {
-        dirText = 'Move camera slightly up and right';
-        icon = '↗️';
-        haptic = [40, 30, 40];
-      } else if (deltaX < 0 && deltaY > 0) {
-        dirText = 'Move camera slightly down and left';
-        icon = '↙️';
-        haptic = [40, 30, 40];
-      } else {
-        dirText = 'Move camera slightly down and right';
-        icon = '↘️';
-        haptic = [40, 30, 40];
-      }
-    } else if (!isCenteredX) {
-      if (deltaX < 0) {
-        dirText = 'Move camera left';
-        icon = '⬅️';
-        haptic = [60, 40, 60];
-      } else {
-        dirText = 'Move camera right';
-        icon = '➡️';
-        haptic = [60, 40, 60];
-      }
-    } else {
-      if (deltaY < 0) {
-        dirText = 'Move camera up';
-        icon = '⬆️';
-        haptic = [50, 50];
-      } else {
-        dirText = 'Move camera down';
-        icon = '⬇️';
-        haptic = [50, 50];
-      }
-    }
-
-    if (headingEl) headingEl.textContent = dirText;
-    if (iconEl) iconEl.textContent = icon;
-    if (instructionEl) instructionEl.textContent = 'Adjust camera direction to center the code in frame.';
-    if (subtextEl) subtextEl.textContent = 'Audio frequency will indicate centering precision.';
-
-    playGestureAudio('RADAR_PING');
-
-    // Debounce spoken guidance to prevent audio overlap
-    const now = Date.now();
-    if (now - lastSpokenGuidanceTime > SPEECH_DEBOUNCE_MS || dirText !== lastSpokenDirection) {
-      lastSpokenGuidanceTime = now;
-      lastSpokenDirection = dirText;
-      provideFeedback({
-        text: dirText,
-        hapticPattern: haptic,
-        hapticLabel: dirText,
-        priority: false
-      });
-    }
-  }
-}
-
-/**
- * Searching State (No QR found yet)
- */
-function updateGuidanceSearching() {
-  const headingEl = document.getElementById('guidance-heading');
-  const iconEl = document.getElementById('guidance-icon');
-  const instructionEl = document.getElementById('scanner-guidance-instruction');
-  const subtextEl = document.getElementById('scanner-guidance-subtext');
-
-  if (headingEl && headingEl.textContent !== 'Searching for QR code...') {
-    headingEl.textContent = 'Searching for QR code...';
-    if (iconEl) iconEl.textContent = '🔍';
-    if (instructionEl) instructionEl.textContent = 'Slowly pan camera over the merchant QR display.';
-    if (subtextEl) subtextEl.textContent = 'Audio cues will begin once a code enters the frame.';
-  }
-}
-
-/**
- * Notice when BarcodeDetector is unsupported on this browser
- */
-function updateGuidanceFallbackNoDetector() {
-  const headingEl = document.getElementById('guidance-heading');
-  const iconEl = document.getElementById('guidance-icon');
-  const instructionEl = document.getElementById('scanner-guidance-instruction');
-  const subtextEl = document.getElementById('scanner-guidance-subtext');
-
-  if (headingEl && !headingEl.textContent.includes('Hardware Decoder Note')) {
-    headingEl.textContent = 'Camera Viewfinder Active';
-    if (iconEl) iconEl.textContent = '📷';
-    if (instructionEl) instructionEl.textContent = 'Browser native BarcodeDetector API is not supported on this platform. Hold steady or use the test presets below.';
-    if (subtextEl) subtextEl.textContent = 'Full directional tracking operates in Chrome/Android with BarcodeDetector.';
-  }
-}
-
-/**
- * Process a Locked QR Code Payload
- */
-export function onQRCodeLocked(rawPayload) {
-  stopCamera();
-
-  // Deduplication check
-  const hash = simpleHash(rawPayload);
-  if (processedHashes.has(hash)) {
-    console.info('PALMLOCK: Prevented duplicate scan of recent QR code:', hash);
-  }
-  processedHashes.add(hash);
-  // Keep maximum 20 recent hashes
-  if (processedHashes.size > 20) {
-    const first = processedHashes.values().next().value;
-    processedHashes.delete(first);
-  }
-
-  // Parse and validate
-  const validatedTx = validatePaymentPayload(rawPayload);
-
-  if (!validatedTx.valid) {
-    handleInvalidQRPayload(validatedTx.error);
     return;
   }
 
-  // Set pending transaction in state
-  setPendingTransaction(validatedTx.data);
-  navigateTo('screen-verification');
+  const directions = [];
+
+  if (!centeredY) {
+    directions.push(
+      deltaY < 0 ? 'up' : 'down'
+    );
+  }
+
+  if (!centeredX) {
+    directions.push(
+      deltaX < 0 ? 'left' : 'right'
+    );
+  }
+
+  const direction =
+    `Move camera ${directions.join(' and ')}`;
+
+  setGuidance(
+    direction,
+    'Adjust the camera to center the QR code.',
+    'Follow the spoken guidance.',
+    '↔️'
+  );
+
+  const now = Date.now();
+
+  if (
+    now - lastSpokenGuidanceTime >=
+    SPEECH_DEBOUNCE_MS
+  ) {
+    lastSpokenGuidanceTime = now;
+    lastSpokenDirection = direction;
+
+    playGestureAudio('RADAR_PING');
+
+    provideFeedback({
+      text: direction,
+      hapticPattern: [50, 80, 50],
+      hapticLabel: direction,
+      priority: false
+    });
+  }
 }
 
-/**
- * Strict Payment QR Payload Validator
- * Validates PALMLOCK JSON, UPI URIs, or Demo Delimited strings
- */
+function updateGuidanceSearching() {
+  const heading = el('guidance-heading');
+
+  if (
+    heading?.textContent !==
+    'Searching for QR Code'
+  ) {
+    setGuidance(
+      'Searching for QR Code',
+      'Slowly move your camera over the QR display.',
+      'Audio guidance begins when a QR code is detected.',
+      '🔍'
+    );
+  }
+}
+
+/* ============================================================
+   QR PAYLOAD VALIDATION
+============================================================ */
+
 export function validatePaymentPayload(raw) {
-  if (!raw || typeof raw !== 'string') {
-    return { valid: false, error: 'Empty or malformed QR code payload.' };
+  if (
+    typeof raw !== 'string' ||
+    !raw.trim() ||
+    raw.length > 4096
+  ) {
+    return {
+      valid: false,
+      error: 'Empty or oversized QR payload.'
+    };
   }
 
   const trimmed = raw.trim();
 
-  // Format 1: PALMLOCK JSON Payload
-  if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+  // PALMLOCK JSON format.
+  if (trimmed.startsWith('{')) {
     try {
       const data = JSON.parse(trimmed);
-      if (!data.merchantName && !data.merchant) {
-        return { valid: false, error: 'QR code missing merchant identification.' };
-      }
-      const amount = parseFloat(data.amount);
-      if (isNaN(amount) || amount <= 0) {
-        return { valid: false, error: 'Invalid or missing payment amount in QR code.' };
-      }
-      const currency = data.currency || 'INR';
-      if (currency !== 'INR' && currency !== '₹') {
-        return { valid: false, error: `Unsupported currency (${currency}). PALMLOCK requires INR (₹).` };
+
+      if (
+        !data ||
+        typeof data !== 'object' ||
+        Array.isArray(data)
+      ) {
+        throw new Error('Invalid JSON object.');
       }
 
-      const merchantName = data.merchantName || data.merchant;
-      const verifiedMerchant = INDIAN_MERCHANTS.find(m => m.name.toLowerCase() === merchantName.toLowerCase());
+      const merchantName =
+        cleanText(
+          data.merchantName || data.merchant
+        );
 
+      const amount =
+        parseMoney(data.amount);
+
+      const fee =
+        parseMoney(data.fee ?? 0, true);
+
+      const currency =
+        String(data.currency || 'INR')
+          .toUpperCase();
+
+      if (!merchantName) {
+        throw new Error(
+          'Merchant name is missing.'
+        );
+      }
+
+      if (amount === null || fee === null) {
+        throw new Error(
+          'Invalid payment amount or fee.'
+        );
+      }
+
+      if (
+        currency !== 'INR' &&
+        currency !== '₹'
+      ) {
+        throw new Error(
+          'Only INR payments are supported.'
+        );
+      }
+
+      return createTransaction({
+        merchantName,
+        amount,
+        fee,
+        category: cleanText(
+          data.category || 'General'
+        ),
+        merchantId:
+          data.merchantId
+            ? cleanText(data.merchantId)
+            : null,
+        source: 'palmlock-json'
+      });
+    } catch (error) {
       return {
-        valid: true,
-        data: {
-          merchantName: merchantName,
-          category: data.category || (verifiedMerchant ? verifiedMerchant.category : 'General'),
-          amount: amount,
-          fee: parseFloat(data.fee) || 0.00,
-          total: amount + (parseFloat(data.fee) || 0.00),
-          currency: 'INR',
-          currencySymbol: '₹',
-          qrHash: data.signature || data.hash || `PL-${Math.floor(10000 + Math.random() * 90000)}-CERT`,
-          referenceId: data.reference || `TX-IN-${Math.floor(10000000 + Math.random() * 90000000)}`,
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          isVerified: !!verifiedMerchant
-        }
+        valid: false,
+        error:
+          error.message ||
+          'Malformed PALMLOCK QR JSON.'
       };
-    } catch (err) {
-      return { valid: false, error: 'Malformed JSON payload in QR code.' };
     }
   }
 
-  // Format 2: UPI Payment URI: upi://pay?pa=...&pn=...&am=...&cu=INR
-  if (trimmed.startsWith('upi://pay')) {
+  // Standard UPI payment URI.
+  if (/^upi:\/\/pay(?:\?|$)/i.test(trimmed)) {
     try {
       const url = new URL(trimmed);
-      const pa = url.searchParams.get('pa') || 'merchant@upi';
-      const pn = url.searchParams.get('pn') || 'Certified UPI Merchant';
-      const am = parseFloat(url.searchParams.get('am') || '0');
-      const cu = url.searchParams.get('cu') || 'INR';
+
+      if (
+        url.protocol !== 'upi:' ||
+        url.hostname.toLowerCase() !== 'pay'
+      ) {
+        throw new Error(
+          'Invalid UPI payment URI.'
+        );
+      }
+
+      const pa =
+        cleanText(url.searchParams.get('pa'));
+
+      const pn =
+        cleanText(url.searchParams.get('pn'));
+
+      const cu =
+        String(
+          url.searchParams.get('cu') || 'INR'
+        ).toUpperCase();
+
+      const amount =
+        parseMoney(url.searchParams.get('am'));
+
+      if (
+        !/^[a-zA-Z0-9._-]+@[a-zA-Z0-9.-]+$/.test(pa)
+      ) {
+        throw new Error(
+          'Invalid or missing UPI payment address.'
+        );
+      }
+
+      if (!pn) {
+        throw new Error(
+          'UPI merchant name is missing.'
+        );
+      }
 
       if (cu !== 'INR') {
-        return { valid: false, error: `Unsupported currency (${cu}). Only Indian Rupee (INR) is accepted.` };
-      }
-      if (isNaN(am) || am <= 0) {
-        return { valid: false, error: 'Missing or invalid amount in UPI QR code.' };
+        throw new Error(
+          'Only INR payments are supported.'
+        );
       }
 
+      if (amount === null) {
+        throw new Error(
+          'UPI QR has no valid fixed amount. This prototype requires a fixed amount.'
+        );
+      }
+
+      return createTransaction({
+        merchantName: pn,
+        amount,
+        fee: 0,
+        category: 'UPI Merchant Payment',
+        paymentAddress: pa,
+        source: 'upi'
+      });
+    } catch (error) {
       return {
-        valid: true,
-        data: {
-          merchantName: decodeURIComponent(pn),
-          category: 'UPI Merchant Payment',
-          amount: am,
-          fee: 0.00,
-          total: am,
-          currency: 'INR',
-          currencySymbol: '₹',
-          qrHash: `UPI-${pa.split('@')[0].toUpperCase()}`,
-          referenceId: `TX-UPI-${Math.floor(10000000 + Math.random() * 90000000)}`,
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          isVerified: true
-        }
+        valid: false,
+        error:
+          error.message ||
+          'Malformed UPI QR payload.'
       };
-    } catch (err) {
-      return { valid: false, error: 'Malformed UPI payment URI string.' };
     }
   }
 
-  // Format 3: PALMLOCK Simple Delimited: PL:MerchantName:Amount:Category
+  // PALMLOCK demonstration format.
   if (trimmed.startsWith('PL:')) {
     const parts = trimmed.split(':');
-    if (parts.length >= 3) {
-      const merchant = parts[1];
-      const amount = parseFloat(parts[2]);
-      const category = parts[3] || 'General';
 
-      if (isNaN(amount) || amount <= 0) {
-        return { valid: false, error: 'Invalid amount in delimited QR payload.' };
-      }
-
+    if (
+      parts.length < 3 ||
+      parts.length > 4
+    ) {
       return {
-        valid: true,
-        data: {
-          merchantName: merchant,
-          category: category,
-          amount: amount,
-          fee: 0.00,
-          total: amount,
-          currency: 'INR',
-          currencySymbol: '₹',
-          qrHash: `PL-DEMO-${Math.floor(10000 + Math.random() * 90000)}`,
-          referenceId: `TX-${Math.floor(10000000 + Math.random() * 90000000)}`,
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          isVerified: true
-        }
+        valid: false,
+        error: 'Invalid PALMLOCK demo QR format.'
       };
     }
+
+    const merchantName =
+      cleanText(parts[1]);
+
+    const amount =
+      parseMoney(parts[2]);
+
+    if (!merchantName || amount === null) {
+      return {
+        valid: false,
+        error: 'Invalid demo merchant or amount.'
+      };
+    }
+
+    return createTransaction({
+      merchantName,
+      amount,
+      category:
+        cleanText(parts[3]) || 'General',
+      source: 'palmlock-demo'
+    });
   }
 
-  return { valid: false, error: 'Unrecognized QR code format. Not a PALMLOCK or UPI payment request.' };
+  return {
+    valid: false,
+    error:
+      'Unrecognized payment QR format. ' +
+      'Use PALMLOCK JSON, UPI, or a PALMLOCK demo code.'
+  };
 }
 
-/**
- * Handle Invalid or Corrupted QR Codes
- */
-function handleInvalidQRPayload(reason) {
-  const headingEl = document.getElementById('guidance-heading');
-  const instructionEl = document.getElementById('scanner-guidance-instruction');
-  const subtextEl = document.getElementById('scanner-guidance-subtext');
+/* ============================================================
+   QR LOCK AND TRANSACTION CREATION
+============================================================ */
 
-  if (headingEl) headingEl.textContent = 'Invalid QR Code';
-  if (instructionEl) instructionEl.textContent = reason;
-  if (subtextEl) subtextEl.textContent = 'Please scan a valid certified merchant payment QR.';
+export function onQRCodeLocked(rawPayload) {
+  if (scanLocked) return;
 
-  playGestureAudio('ERROR');
-  provideFeedback({
-    text: `QR code rejected. ${reason}`,
-    gesture: 'ERROR',
-    hapticPattern: [150, 100, 150],
-    hapticLabel: 'Invalid QR Format',
-    priority: true
-  });
-}
-
-/**
- * Toggle Camera Flashlight/Torch if supported
- */
-export async function toggleTorch() {
-  if (!videoStream) {
-    provideFeedback({ text: 'Camera torch not available in simulation mode.' });
+  if (
+    typeof rawPayload !== 'string' ||
+    !rawPayload.trim()
+  ) {
+    handleInvalidQRPayload(
+      'Empty QR code.'
+    );
     return;
   }
 
-  const track = videoStream.getVideoTracks()[0];
-  if (!track) return;
+  const now = Date.now();
 
-  try {
-    const capabilities = track.getCapabilities();
-    if (capabilities.torch) {
-      isTorchOn = !isTorchOn;
-      await track.applyConstraints({
-        advanced: [{ torch: isTorchOn }]
-      });
-      provideFeedback({
-        text: isTorchOn ? 'Torch enabled' : 'Torch disabled',
-        hapticPattern: 50
-      });
-    } else {
-      provideFeedback({ text: 'Device does not support hardware torch.' });
-    }
-  } catch (err) {
-    console.warn('Torch control error:', err);
+  if (
+    rawPayload === lastProcessedPayload &&
+    now - lastProcessedAt < 1200
+  ) {
+    return;
   }
-}
 
-/**
- * Simulate scanning a pre-configured QR code payload (Indian Merchants in INR)
- */
-export function simulateScannedQR({ merchant, amount, fee = 0.00, category = 'General' }) {
+  lastProcessedPayload = rawPayload;
+  lastProcessedAt = now;
+  scanLocked = true;
+
+  const validated =
+    validatePaymentPayload(rawPayload);
+
+  if (!validated.valid) {
+    stopCamera();
+    handleInvalidQRPayload(validated.error);
+    return;
+  }
+
   stopCamera();
 
-  const total = (parseFloat(amount) + parseFloat(fee)).toFixed(2);
-  const refId = `TX-IN-${Math.floor(10000000 + Math.random() * 90000000)}`;
-  const qrHash = `PL-${Math.floor(10000 + Math.random() * 90000)}-CERT`;
+  setPendingTransaction(validated.data);
 
-  setPendingTransaction({
-    merchantName: merchant,
-    amount: parseFloat(amount),
-    fee: parseFloat(fee),
-    total: parseFloat(total),
-    currency: 'INR',
-    currencySymbol: '₹',
-    category: category,
-    qrHash: qrHash,
-    referenceId: refId,
-    timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  provideFeedback({
+    text:
+      `Payment request detected for ` +
+      `${validated.data.merchantName}. ` +
+      `Amount ${validated.data.amount} rupees. ` +
+      'Merchant identity has not yet been independently verified. ' +
+      'This payment is simulated.',
+    priority: true
   });
 
   navigateTo('screen-verification');
 }
 
-/**
- * Simple string hash for deduplication
- */
-function simpleHash(str) {
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) {
-    const char = str.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
-    hash |= 0;
+function handleInvalidQRPayload(reason) {
+  setGuidance(
+    'Invalid QR Code',
+    reason,
+    'Use a valid payment QR or demonstration code.',
+    '⚠️'
+  );
+
+  playGestureAudio('ERROR');
+
+  feedback(
+    `QR code rejected. ${reason}`
+  );
+}
+
+/* ============================================================
+   CAMERA TORCH
+============================================================ */
+
+export async function toggleTorch() {
+  const track =
+    videoStream?.getVideoTracks()[0];
+
+  if (!track) {
+    feedback(
+      'Camera torch is unavailable.'
+    );
+    return;
   }
-  return hash.toString();
+
+  try {
+    const capabilities =
+      track.getCapabilities?.() || {};
+
+    if (!capabilities.torch) {
+      feedback(
+        'This device does not support camera torch.'
+      );
+      return;
+    }
+
+    const nextValue = !isTorchOn;
+
+    await track.applyConstraints({
+      advanced: [{
+        torch: nextValue
+      }]
+    });
+
+    isTorchOn = nextValue;
+
+    provideFeedback({
+      text:
+        isTorchOn
+          ? 'Torch enabled.'
+          : 'Torch disabled.',
+      hapticPattern: 50
+    });
+  } catch (error) {
+    console.warn(
+      '[PALMLOCK SCANNER] Torch error:',
+      error
+    );
+
+    feedback(
+      'Unable to change torch setting.'
+    );
+  }
+}
+
+/* ============================================================
+   DEMONSTRATION QR
+============================================================ */
+
+export function simulateScannedQR({
+  merchant,
+  amount,
+  fee = 0,
+  category = 'General'
+} = {}) {
+  const merchantName =
+    cleanText(merchant);
+
+  const parsedAmount =
+    parseMoney(amount);
+
+  const parsedFee =
+    parseMoney(fee, true);
+
+  if (
+    !merchantName ||
+    parsedAmount === null ||
+    parsedFee === null
+  ) {
+    feedback(
+      'Invalid demonstration payment details.'
+    );
+    return;
+  }
+
+  const result = createTransaction({
+    merchantName,
+    amount: parsedAmount,
+    fee: parsedFee,
+    category,
+    source: 'demo-preset'
+  });
+
+  if (!result.valid) {
+    feedback(result.error);
+    return;
+  }
+
+  stopCamera();
+  scanLocked = true;
+
+  setPendingTransaction(result.data);
+
+  provideFeedback({
+    text:
+      `Demonstration payment loaded. ` +
+      `${merchantName}, ${parsedAmount} rupees. ` +
+      'No real money will be transferred.',
+    priority: true
+  });
+
+  navigateTo('screen-verification');
 }

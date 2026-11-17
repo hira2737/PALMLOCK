@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -32,17 +32,18 @@
           <option value="screen-welcome">1. Welcome / Login</option>
           <option value="screen-register">2. Registration</option>
           <option value="screen-setup">3. User Setup</option>
-          <option value="screen-contacts">4. Trusted Contacts</option>
-          <option value="screen-dashboard" selected>5. Home Dashboard</option>
-          <option value="screen-scanner">6. QR Scanner</option>
-          <option value="screen-verification">7. Merchant Verify</option>
-          <option value="screen-gesture-pin">8. Gesture PIN</option>
-          <option value="screen-stealth">9. Stealth Mode</option>
-          <option value="screen-payment-result">10. Payment Result</option>
-          <option value="screen-history">11. Payment History</option>
-          <option value="screen-tutorial">12. Tutorial</option>
-          <option value="screen-practice">13. Gesture Practice</option>
-          <option value="screen-settings">14. Settings</option>
+          <option value="screen-pin-setup">4. Security PIN Setup</option>
+          <option value="screen-contacts">5. Trusted Contacts</option>
+          <option value="screen-dashboard" selected>6. Home Dashboard</option>
+          <option value="screen-scanner">7. QR Scanner</option>
+          <option value="screen-verification">8. Merchant Verify</option>
+          <option value="screen-gesture-pin">9. Gesture PIN</option>
+          <option value="screen-stealth">10. Stealth Mode</option>
+          <option value="screen-payment-result">11. Payment Result</option>
+          <option value="screen-history">12. Payment History</option>
+          <option value="screen-tutorial">13. Tutorial</option>
+          <option value="screen-practice">14. Gesture Practice</option>
+          <option value="screen-settings">15. Settings</option>
         </select>
         <button type="button" id="btn-toggle-fullscreen" class="btn-preview-toggle" aria-label="Toggle Fullscreen / Mobile Frame View">
           Toggle Frame
@@ -114,17 +115,17 @@
           </button>
 
           <div class="demo-badge-banner" role="note">
-            <span><strong>Demo Mode:</strong> Client-side simulation active.</span>
+            <span><strong>Demo Mode:</strong> Payments are simulated; account login requires the backend.</span>
             <button type="button" class="btn-preview-toggle" id="btn-fill-demo-login">Fill Demo User</button>
           </div>
 
           <form id="form-login" novalidate aria-label="PALMLOCK Account Sign-In">
             <div class="form-group">
               <label for="login-email" class="form-label">
-                <span>Email or Phone Number</span>
+                <span>Email Address</span>
                 <span class="form-label-hint">Required</span>
               </label>
-              <input type="text" id="login-email" class="form-input" autocomplete="username" placeholder="e.g. user@palmlock.app" required aria-required="true">
+              <input type="email" id="login-email" class="form-input" autocomplete="username" placeholder="e.g. user@palmlock.app" required aria-required="true">
               <div id="login-email-error" class="form-error" role="alert"></div>
             </div>
 
@@ -159,7 +160,7 @@
           </header>
 
           <p class="text-subtitle" style="margin-top: var(--space-3);">
-            Set up your accessible identity profile. You will configure your custom gesture PIN in the next step.
+            Set up your accessible identity profile. You will configure your custom gesture PIN after choosing accessibility preferences.
           </p>
 
           <form id="form-register" novalidate aria-label="Registration Form">
@@ -167,6 +168,12 @@
               <label for="reg-fullname" class="form-label">Full Name</label>
               <input type="text" id="reg-fullname" class="form-input" placeholder="e.g. Maya Lin" required>
               <div id="reg-name-error" class="form-error" role="alert"></div>
+            </div>
+
+            <div class="form-group">
+              <label for="reg-email" class="form-label">Email Address</label>
+              <input type="email" id="reg-email" class="form-input" placeholder="you@example.com" autocomplete="email" required>
+              <div id="reg-email-error" class="form-error" role="alert"></div>
             </div>
 
             <div class="form-group">
@@ -252,8 +259,49 @@
           </div>
 
           <button type="button" class="btn btn-primary btn-full btn-large" id="btn-save-setup">
-            Complete Profile Setup
+            Continue to Security PIN Setup
           </button>
+        </section>
+
+        <!-- ===================================================================
+             SECURITY ONBOARDING: NORMAL AND DURESS GESTURE PINS
+             =================================================================== -->
+        <section id="screen-pin-setup" class="app-screen" aria-labelledby="heading-pin-setup">
+          <header class="screen-header">
+            <div class="screen-header-left">
+              <button type="button" class="btn-header-back" data-back="screen-setup" aria-label="Back to accessibility setup">‹</button>
+              <h1 id="heading-pin-setup" class="screen-title">Security PIN Setup</h1>
+            </div>
+          </header>
+          <p class="text-subtitle" style="margin-top: var(--space-3);">
+            Choose two different four-gesture sequences: one for simulated payments and one to discreetly request emergency assistance.
+          </p>
+          <div class="card" role="note">
+            <h2 class="heading-section">Gesture guide</h2>
+            <p class="text-subtitle">↖ 1 · ↑ 2 · ↗ 3 · ← 4 · → 5 · ↙ 6 · ↓ 7 · ↘ 8 · Double tap 9 · Single tap 0</p>
+            <p class="text-subtitle">For accessible setup, enter the four digits corresponding to your chosen gestures. You can practice the actual swipes in the Practice Lab.</p>
+          </div>
+          <form id="form-pin-setup" novalidate aria-label="Set up normal and emergency gesture PINs">
+            <div class="form-group">
+              <label for="setup-standard-pin" class="form-label">Normal payment gesture PIN</label>
+              <input id="setup-standard-pin" class="form-input" type="password" inputmode="numeric" pattern="[0-9]{4}" minlength="4" maxlength="4" autocomplete="new-password" required aria-describedby="pin-setup-help">
+            </div>
+            <div class="form-group">
+              <label for="setup-standard-confirm" class="form-label">Confirm normal PIN</label>
+              <input id="setup-standard-confirm" class="form-input" type="password" inputmode="numeric" pattern="[0-9]{4}" minlength="4" maxlength="4" autocomplete="new-password" required>
+            </div>
+            <div class="form-group">
+              <label for="setup-duress-pin" class="form-label">Emergency duress gesture PIN</label>
+              <input id="setup-duress-pin" class="form-input" type="password" inputmode="numeric" pattern="[0-9]{4}" minlength="4" maxlength="4" autocomplete="new-password" required>
+            </div>
+            <div class="form-group">
+              <label for="setup-duress-confirm" class="form-label">Confirm emergency PIN</label>
+              <input id="setup-duress-confirm" class="form-input" type="password" inputmode="numeric" pattern="[0-9]{4}" minlength="4" maxlength="4" autocomplete="new-password" required>
+            </div>
+            <p id="pin-setup-help" class="text-subtitle">Keep both PINs private. The emergency PIN must be different from the payment PIN. PALMLOCK does not display saved PINs.</p>
+            <div id="pin-setup-error" class="form-error" role="alert" aria-live="assertive"></div>
+            <button type="submit" class="btn btn-primary btn-full btn-large" id="btn-submit-pin-setup">Save Security PINs</button>
+          </form>
         </section>
 
         <!-- ===================================================================
@@ -278,9 +326,51 @@
             <span><strong>Notice:</strong> Emergency dispatch simulated in demonstration mode.</span>
           </div>
 
-          <div id="contacts-list-container" class="history-list" role="list" aria-label="Emergency contacts registry">
-            <!-- Dynamically populated from contacts.js -->
-          </div>
+          
+<div
+  id="contacts-list-container"
+  class="history-list"
+  role="list"
+  aria-label="Emergency contacts registry"
+>
+  <!-- Dynamically populated from contacts.js -->
+</div>
+
+<!-- Guardian verification and onboarding completion -->
+<div class="card" style="margin-top: var(--space-4);">
+  <h2 class="heading-section">
+    Emergency Guardian Setup
+  </h2>
+
+  <p
+    id="guardian-onboarding-status"
+    class="text-subtitle"
+    role="status"
+    aria-live="polite"
+    style="margin-bottom: var(--space-3);"
+  >
+    Checking your trusted guardian verification status...
+  </p>
+
+  <button
+    type="button"
+    id="btn-continue-dashboard"
+    class="btn btn-primary btn-full btn-large"
+    disabled
+    aria-describedby="guardian-onboarding-status"
+  >
+    Checking Guardian Verification...
+  </button>
+
+  <p
+    class="text-subtitle"
+    style="margin-top: var(--space-2); font-size: var(--font-size-xs);"
+  >
+    At least one verified primary guardian with emergency
+    notifications enabled is required to complete setup.
+  </p>
+</div>
+
         </section>
 
         <!-- ===================================================================
@@ -579,7 +669,7 @@
           </details>
 
           <div class="card" style="padding: var(--space-3); font-size: var(--font-size-xs); color: var(--text-muted);">
-            <div><strong>Accessibility Note:</strong> Normal PIN is <code>UP, RIGHT, UP, TAP (2-5-2-0)</code>. Discreet Duress PIN is <code>DOWN, DOWN, LEFT, LEFT (7-7-4-4)</code>. Inactivity auto-clears after 12 seconds.</div>
+            <div><strong>Accessibility Note:</strong> Use your own four-gesture PIN. Never share either PIN. Inactivity auto-clears after 12 seconds.</div>
           </div>
         </section>
 
@@ -882,8 +972,8 @@
               The Duress PIN quietly dispatches your emergency coordinates to trusted contacts while appearing as a card decline.
             </p>
             <div class="verify-detail-row" style="margin-bottom: var(--space-2);">
-              <span style="color: var(--text-muted);">Current Duress PIN:</span>
-              <span style="font-family: var(--font-family-mono); font-weight: bold; color: var(--color-danger);">DOWN, DOWN, LEFT, LEFT</span>
+              <span style="color: var(--text-muted);">Duress PIN:</span>
+              <span style="font-family: var(--font-family-mono); font-weight: bold;">Not displayed for security</span>
             </div>
             <button type="button" class="btn btn-outline btn-full" id="btn-manage-contacts-from-settings">
               Manage Trusted Guardians (2 Registered)
@@ -1040,3 +1130,4 @@
   <script type="module" src="js/user/app.js"></script>
 </body>
 </html>
+

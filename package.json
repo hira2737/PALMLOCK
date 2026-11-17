@@ -5,6 +5,10 @@
   "main": "index.js",
   "scripts": {
     "test": "node test/verify_ui.mjs && node test/unit_logic.mjs && node test/verify_admin.mjs && node test/verify_map.mjs && node test/verify_gesture_pin.mjs && node test/verify_currency_vibrate.mjs && node test/verify_qr_logic.mjs && node test/verify_all_admin_sections.mjs && node test/regression_debug_suite.mjs && node test/full_functional_simulation.mjs",
+    "test:backend": "npm --prefix backend test",
+    "test:all": "npm test && npm --prefix backend test",
+    "server": "npm --prefix backend start",
+    "seed": "npm --prefix backend run seed",
     "test:ui": "node test/verify_ui.mjs",
     "test:logic": "node test/unit_logic.mjs",
     "test:admin": "node test/verify_admin.mjs",

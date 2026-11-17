@@ -20,6 +20,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initAudioControls();
   initKeyboardShortcuts();
   initCrossTabSync();
+  initSocketIOSync();
 
   // Initialize all section modules
   renderOverview();
@@ -554,5 +555,117 @@ function initCrossTabSync() {
     };
   } catch (e) {
     console.info('BroadcastChannel cross-tab listener warning:', e);
+  }
+}
+
+/**
+ * Real-time WebSocket Sync (Socket.IO)
+ * Connects directly to PALMLOCK Security & Emergency Backend
+ */
+function initSocketIOSync() {
+  if (typeof io === 'undefined') return;
+
+  try {
+    const socketUrl = window.location.port === '5000'
+      ? '/'
+      : (window.location.protocol.startsWith('http') ? 'http://localhost:5000' : 'http://localhost:5000');
+
+    const socket = io(socketUrl, {
+      transports: ['websocket', 'polling'],
+      withCredentials: true,
+      autoConnect: true,
+      reconnectionAttempts: 5
+    });
+
+    socket.on('connect', () => {
+      console.info('[SOC SOCKET] Connected to PALMLOCK Real-time Event Server. Socket ID:', socket.id);
+      socket.emit('join', 'room:admins');
+    });
+
+    socket.on('incident:created', (data) => {
+      console.warn('[SOC SOCKET] Live emergency incident received:', data);
+      const inc = data.alert || data;
+      const normalized = {
+        id: inc.incidentId || inc.id || `INC-${Date.now()}`,
+        userName: inc.userName || 'Authorized Beneficiary',
+        userPhone: inc.userPhone || '+91 98765 43210',
+        alertType: inc.type === 'SOS' ? 'Manual Emergency SOS' : 'Tactile Duress PIN Activated',
+        severity: inc.severity || 'critical',
+        status: inc.status || 'active',
+        escalationTier: inc.escalationTier || 1,
+        time: 'Just now',
+        lat: inc.location?.lat || 13.0827,
+        lng: inc.location?.lng || 80.2707,
+        locationName: inc.location?.address || 'Chennai Central, Tamil Nadu',
+        accuracy: inc.location?.accuracyMeters ? `±${inc.location.accuracyMeters}m` : '±12m',
+        notes: []
+      };
+
+      if (!adminState.incidents.some(i => i.id === normalized.id)) {
+        adminState.incidents.unshift(normalized);
+      }
+
+      const badge = document.getElementById('badge-active-alerts');
+      if (badge) {
+        badge.textContent = adminState.incidents.filter(i => i.status !== 'resolved').length;
+      }
+
+      if (adminState.sirenAudioEnabled) {
+        playEmergencySiren();
+      }
+
+      announceAdminEvent(`PRIORITY ALERT: New emergency incident ${normalized.id} received from ${normalized.userName}!`);
+      renderOverview();
+      renderAlertsTable();
+    });
+
+    socket.on('incident:escalated', (data) => {
+      console.warn('[SOC SOCKET] Incident escalation received:', data);
+      const inc = adminState.incidents.find(i => i.id === data.incidentId);
+      if (inc) {
+        inc.escalationTier = data.tier;
+        inc.status = 'escalated';
+        renderAlertsTable();
+        announceAdminEvent(`CRITICAL ESCALATION: Incident ${data.incidentId} escalated to Tier ${data.tier}!`);
+      }
+    });
+
+    socket.on('incident:acknowledged', (data) => {
+      const inc = adminState.incidents.find(i => i.id === data.incidentId);
+      if (inc) {
+        inc.status = 'acknowledged';
+        renderAlertsTable();
+      }
+    });
+
+    socket.on('incident:false_alarm', (data) => {
+      const inc = adminState.incidents.find(i => i.id === data.incidentId);
+      if (inc) {
+        inc.status = 'resolved';
+      }
+      adminState.falseAlarms.unshift({
+        id: `FA-${Date.now()}`,
+        incidentId: data.incidentId,
+        user: data.alert?.userName || 'Beneficiary User',
+        alertType: 'SOS / Duress Trigger',
+        cancelledAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        reason: data.reason || 'User reported accidental trigger.',
+        reviewStatus: 'Pending Review',
+        reviewingOfficer: 'Officer K. Ramanathan',
+        notes: 'User verified normal PIN and stood down emergency.'
+      });
+      renderFalseAlarmSection();
+      renderAlertsTable();
+      renderOverview();
+    });
+
+    socket.on('transaction:created', (data) => {
+      if (data.transaction) {
+        adminState.transactions.unshift(data.transaction);
+        renderTransactionsTable();
+      }
+    });
+  } catch (err) {
+    console.info('Socket.IO initialization fallback:', err.message);
   }
 }

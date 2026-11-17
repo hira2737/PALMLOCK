@@ -1,71 +1,173 @@
+
 /**
- * PALMLOCK — Touch Beyond Vision
- * Directional Gesture Engine: 8-Way Swipes, Single/Double Tap Detection,
- * Numeric Mapping (0-9), Tactile & Audio Feedback, Inactivity Auto-Clear
+ * PALMLOCK — Accessible Gesture PIN Engine
+ *
+ * 8 directional swipes + single/double tap.
+ * Four-gesture PIN entry.
+ *
+ * Security:
+ * - PIN digits are not spoken.
+ * - PIN directions are not shown in payment slots.
+ * - One completion callback per PIN entry.
+ * - Inactivity clears incomplete entry.
  */
 
 import { state } from './state.js';
-import { provideFeedback, playGestureAudio } from './accessibility.js';
+import {
+  provideFeedback
+} from './accessibility.js';
 
-const MIN_SWIPE_DISTANCE = 35; // Pixels required to qualify as directional swipe
-const MAX_TAP_DISTANCE = 15;   // Max pixel movement to qualify as a TAP
-const DOUBLE_TAP_MAX_DELAY = 320; // Max ms between taps to trigger Double-Tap (Digit 9)
-const INACTIVITY_TIMEOUT_MS = 12000; // Inactivity auto-clear after 12 seconds
+const MIN_SWIPE_DISTANCE = 35;
+const MAX_TAP_DISTANCE = 15;
+const MAX_TAP_DURATION_MS = 400;
+const DOUBLE_TAP_MAX_DELAY = 320;
+const INACTIVITY_TIMEOUT_MS = 12000;
+const PIN_LENGTH = 4;
 
-/**
- * PALMLOCK Complete Numeric Gesture Mapping:
- * 1: Up-left ↖
- * 2: Up ↑
- * 3: Up-right ↗
- * 4: Left ←
- * 5: Right →
- * 6: Down-left ↙
- * 7: Down ↓
- * 8: Down-right ↘
- * 9: Double tap
- * 0: Single tap
- */
 export const GESTURE_TO_DIGIT = {
-  'UP_LEFT': 1,
-  'UP': 2,
-  'UP_RIGHT': 3,
-  'LEFT': 4,
-  'RIGHT': 5,
-  'DOWN_LEFT': 6,
-  'DOWN': 7,
-  'DOWN_RIGHT': 8,
-  'DOUBLE_TAP': 9,
-  'TAP': 0,
-  'SINGLE_TAP': 0
+  UP_LEFT: 1,
+  UP: 2,
+  UP_RIGHT: 3,
+  LEFT: 4,
+  RIGHT: 5,
+  DOWN_LEFT: 6,
+  DOWN: 7,
+  DOWN_RIGHT: 8,
+  DOUBLE_TAP: 9,
+  TAP: 0,
+  SINGLE_TAP: 0
 };
 
 export const DIGIT_TO_GESTURE = {
-  1: { gesture: 'UP_LEFT', symbol: '↖', label: 'Up-Left' },
-  2: { gesture: 'UP', symbol: '↑', label: 'Up' },
-  3: { gesture: 'UP_RIGHT', symbol: '↗', label: 'Up-Right' },
-  4: { gesture: 'LEFT', symbol: '←', label: 'Left' },
-  5: { gesture: 'RIGHT', symbol: '→', label: 'Right' },
-  6: { gesture: 'DOWN_LEFT', symbol: '↙', label: 'Down-Left' },
-  7: { gesture: 'DOWN', symbol: '↓', label: 'Down' },
-  8: { gesture: 'DOWN_RIGHT', symbol: '↘', label: 'Down-Right' },
-  9: { gesture: 'DOUBLE_TAP', symbol: '••', label: 'Double Tap' },
-  0: { gesture: 'SINGLE_TAP', symbol: '•', label: 'Single Tap' }
+  1: {
+    gesture: 'UP_LEFT',
+    symbol: '↖',
+    label: 'Up-Left'
+  },
+  2: {
+    gesture: 'UP',
+    symbol: '↑',
+    label: 'Up'
+  },
+  3: {
+    gesture: 'UP_RIGHT',
+    symbol: '↗',
+    label: 'Up-Right'
+  },
+  4: {
+    gesture: 'LEFT',
+    symbol: '←',
+    label: 'Left'
+  },
+  5: {
+    gesture: 'RIGHT',
+    symbol: '→',
+    label: 'Right'
+  },
+  6: {
+    gesture: 'DOWN_LEFT',
+    symbol: '↙',
+    label: 'Down-Left'
+  },
+  7: {
+    gesture: 'DOWN',
+    symbol: '↓',
+    label: 'Down'
+  },
+  8: {
+    gesture: 'DOWN_RIGHT',
+    symbol: '↘',
+    label: 'Down-Right'
+  },
+  9: {
+    gesture: 'DOUBLE_TAP',
+    symbol: '••',
+    label: 'Double Tap'
+  },
+  0: {
+    gesture: 'SINGLE_TAP',
+    symbol: '•',
+    label: 'Single Tap'
+  }
 };
 
 let inactivityTimer = null;
+let completionTimer = null;
+let onPinCompleteCallback = null;
+let pinSubmissionPending = false;
+let pinEntryVersion = 0;
+
+function normalizeGesture(gesture) {
+  return gesture === 'TAP'
+    ? 'SINGLE_TAP'
+    : gesture;
+}
+
+function isValidGesture(gesture) {
+  return Object.prototype.hasOwnProperty.call(
+    GESTURE_TO_DIGIT,
+    gesture
+  );
+}
+
+function ensurePinState() {
+  if (!Array.isArray(state.enteredPin)) {
+    state.enteredPin = [];
+  }
+}
+
+function cancelInactivityTimer() {
+  if (inactivityTimer !== null) {
+    clearTimeout(inactivityTimer);
+    inactivityTimer = null;
+  }
+}
+
+function cancelCompletionTimer() {
+  if (completionTimer !== null) {
+    clearTimeout(completionTimer);
+    completionTimer = null;
+  }
+}
+
+/* ============================================================
+   GESTURE RECOGNIZER
+============================================================ */
 
 export class GestureRecognizer {
-  constructor(element, onGestureDetected) {
+  constructor(
+    element,
+    onGestureDetected
+  ) {
     this.element = element;
-    this.onGestureDetected = onGestureDetected;
+    this.onGestureDetected =
+      onGestureDetected;
+
     this.startX = 0;
     this.startY = 0;
     this.startTime = 0;
+    this.activePointerId = null;
     this.isTracking = false;
 
-    // Single vs Double tap disambiguation state
     this.lastTapTime = 0;
+    this.lastTapX = 0;
+    this.lastTapY = 0;
     this.pendingTapTimeout = null;
+
+    this.boundPointerDown =
+      event => this.handlePointerDown(event);
+
+    this.boundPointerMove =
+      event => this.handlePointerMove(event);
+
+    this.boundPointerUp =
+      event => this.handlePointerUp(event);
+
+    this.boundPointerCancel =
+      event => this.handlePointerCancel(event);
+
+    this.boundKeyDown =
+      event => this.handleKeyDown(event);
 
     this.initListeners();
   }
@@ -73,358 +175,757 @@ export class GestureRecognizer {
   initListeners() {
     if (!this.element) return;
 
-    // Pointer Events API (Unified touch, stylus, and mouse support)
-    this.element.addEventListener('pointerdown', (e) => this.handlePointerDown(e), { passive: false });
-    this.element.addEventListener('pointermove', (e) => this.handlePointerMove(e), { passive: false });
-    this.element.addEventListener('pointerup', (e) => this.handlePointerUp(e), { passive: false });
-    this.element.addEventListener('pointercancel', (e) => this.handlePointerCancel(e), { passive: false });
+    this.element.style.touchAction = 'none';
 
-    // Keyboard Fallback for Screen Readers & Motor-Impaired Users
-    this.element.addEventListener('keydown', (e) => this.handleKeyDown(e));
-  }
-
-  handlePointerDown(e) {
-    e.preventDefault();
-    this.startX = e.clientX;
-    this.startY = e.clientY;
-    this.startTime = Date.now();
-    this.isTracking = true;
-    this.element.classList.add('active-swiping');
-    
-    try {
-      this.element.setPointerCapture(e.pointerId);
-    } catch (err) {}
-  }
-
-  handlePointerMove(e) {
-    if (!this.isTracking) return;
-    e.preventDefault();
-  }
-
-  handlePointerUp(e) {
-    if (!this.isTracking) return;
-    this.isTracking = false;
-    this.element.classList.remove('active-swiping');
-
-    const endX = e.clientX;
-    const endY = e.clientY;
-    const duration = Date.now() - this.startTime;
-
-    const deltaX = endX - this.startX;
-    const deltaY = endY - this.startY;
-    const absX = Math.abs(deltaX);
-    const absY = Math.abs(deltaY);
-
-    // 1. Evaluate Tap (within displacement threshold)
-    if (absX <= MAX_TAP_DISTANCE && absY <= MAX_TAP_DISTANCE && duration <= 400) {
-      const now = Date.now();
-      const timeSinceLastTap = now - this.lastTapTime;
-
-      if (timeSinceLastTap < DOUBLE_TAP_MAX_DELAY) {
-        // Double Tap confirmed! Cancel pending single-tap and trigger Digit 9
-        if (this.pendingTapTimeout) {
-          clearTimeout(this.pendingTapTimeout);
-          this.pendingTapTimeout = null;
-        }
-        this.lastTapTime = 0;
-        this.triggerGesture('DOUBLE_TAP');
-      } else {
-        // Potential Single Tap (Digit 0). Delay slightly to ensure second tap doesn't follow
-        this.lastTapTime = now;
-        this.pendingTapTimeout = setTimeout(() => {
-          this.triggerGesture('SINGLE_TAP');
-          this.pendingTapTimeout = null;
-        }, DOUBLE_TAP_MAX_DELAY);
-      }
-      return;
+    if (
+      !this.element.hasAttribute('tabindex')
+    ) {
+      this.element.tabIndex = 0;
     }
 
-    // 2. Evaluate 8-Directional Vector Angle
-    if (absX >= MIN_SWIPE_DISTANCE || absY >= MIN_SWIPE_DISTANCE) {
-      const direction = classifyDirection(deltaX, deltaY, MIN_SWIPE_DISTANCE);
-      if (direction !== 'NONE') {
-        this.triggerGesture(direction);
-      }
-    }
+    this.element.addEventListener(
+      'pointerdown',
+      this.boundPointerDown
+    );
+
+    this.element.addEventListener(
+      'pointermove',
+      this.boundPointerMove
+    );
+
+    this.element.addEventListener(
+      'pointerup',
+      this.boundPointerUp
+    );
+
+    this.element.addEventListener(
+      'pointercancel',
+      this.boundPointerCancel
+    );
+
+    this.element.addEventListener(
+      'keydown',
+      this.boundKeyDown
+    );
   }
 
-  handlePointerCancel() {
-    this.isTracking = false;
-    this.element.classList.remove('active-swiping');
-    if (this.pendingTapTimeout) {
+  clearPendingTap() {
+    if (this.pendingTapTimeout !== null) {
       clearTimeout(this.pendingTapTimeout);
       this.pendingTapTimeout = null;
     }
+
+    this.lastTapTime = 0;
   }
 
-  handleKeyDown(e) {
-    switch (e.key) {
-      case 'ArrowUp':
-        e.preventDefault();
-        this.triggerGesture('UP');
-        break;
-      case 'ArrowDown':
-        e.preventDefault();
-        this.triggerGesture('DOWN');
-        break;
-      case 'ArrowLeft':
-        e.preventDefault();
-        this.triggerGesture('LEFT');
-        break;
-      case 'ArrowRight':
-        e.preventDefault();
-        this.triggerGesture('RIGHT');
-        break;
-      case '1':
-      case 'End':
-        e.preventDefault();
-        this.triggerGesture('UP_LEFT');
-        break;
-      case '2':
-        e.preventDefault();
-        this.triggerGesture('UP');
-        break;
-      case '3':
-      case 'PageDown':
-        e.preventDefault();
-        this.triggerGesture('UP_RIGHT');
-        break;
-      case '4':
-        e.preventDefault();
-        this.triggerGesture('LEFT');
-        break;
-      case '5':
-        e.preventDefault();
-        this.triggerGesture('RIGHT');
-        break;
-      case '6':
-        e.preventDefault();
-        this.triggerGesture('DOWN_LEFT');
-        break;
-      case '7':
-      case 'Home':
-        e.preventDefault();
-        this.triggerGesture('DOWN');
-        break;
-      case '8':
-        e.preventDefault();
-        this.triggerGesture('DOWN_RIGHT');
-        break;
-      case '9':
-      case 'PageUp':
-        e.preventDefault();
-        this.triggerGesture('DOUBLE_TAP');
-        break;
-      case '0':
-      case ' ':
-      case 'Enter':
-        e.preventDefault();
-        this.triggerGesture('SINGLE_TAP');
-        break;
-      case 'Backspace':
-        e.preventDefault();
-        undoPinGesture();
-        break;
-      case 'Escape':
-        e.preventDefault();
-        clearPinGestures();
-        break;
+  handlePointerDown(event) {
+    if (
+      this.isTracking ||
+      event.isPrimary === false
+    ) {
+      return;
+    }
+
+    event.preventDefault();
+
+    this.startX = event.clientX;
+    this.startY = event.clientY;
+    this.startTime = performance.now();
+
+    this.activePointerId =
+      event.pointerId;
+
+    this.isTracking = true;
+
+    this.element.classList.add(
+      'active-swiping'
+    );
+
+    try {
+      this.element.setPointerCapture(
+        event.pointerId
+      );
+    } catch (_) {}
+  }
+
+  handlePointerMove(event) {
+    if (
+      !this.isTracking ||
+      event.pointerId !==
+      this.activePointerId
+    ) {
+      return;
+    }
+
+    event.preventDefault();
+  }
+
+  handlePointerUp(event) {
+    if (
+      !this.isTracking ||
+      event.pointerId !==
+      this.activePointerId
+    ) {
+      return;
+    }
+
+    event.preventDefault();
+
+    this.isTracking = false;
+    this.activePointerId = null;
+
+    this.element.classList.remove(
+      'active-swiping'
+    );
+
+    const now = performance.now();
+
+    const duration =
+      now - this.startTime;
+
+    const deltaX =
+      event.clientX - this.startX;
+
+    const deltaY =
+      event.clientY - this.startY;
+
+    const absX = Math.abs(deltaX);
+    const absY = Math.abs(deltaY);
+
+    const isTap =
+      absX <= MAX_TAP_DISTANCE &&
+      absY <= MAX_TAP_DISTANCE &&
+      duration <= MAX_TAP_DURATION_MS;
+
+    if (isTap) {
+      this.handleTap(
+        now,
+        event.clientX,
+        event.clientY
+      );
+      return;
+    }
+
+    // Finish a pending single tap before
+    // processing a subsequent swipe.
+    this.flushPendingTap();
+
+    const direction =
+      classifyDirection(
+        deltaX,
+        deltaY,
+        MIN_SWIPE_DISTANCE
+      );
+
+    if (direction !== 'NONE') {
+      this.triggerGesture(direction);
+    }
+  }
+
+  handleTap(now, x, y) {
+    const withinTime =
+      this.lastTapTime > 0 &&
+      now - this.lastTapTime <=
+      DOUBLE_TAP_MAX_DELAY;
+
+    const withinDistance =
+      Math.hypot(
+        x - this.lastTapX,
+        y - this.lastTapY
+      ) <= 50;
+
+    if (
+      withinTime &&
+      withinDistance &&
+      this.pendingTapTimeout !== null
+    ) {
+      this.clearPendingTap();
+
+      this.triggerGesture(
+        'DOUBLE_TAP'
+      );
+      return;
+    }
+
+    // If the previous tap cannot form a
+    // double tap, commit it as a single tap.
+    this.flushPendingTap();
+
+    this.lastTapTime = now;
+    this.lastTapX = x;
+    this.lastTapY = y;
+
+    this.pendingTapTimeout =
+      setTimeout(() => {
+        this.pendingTapTimeout = null;
+        this.lastTapTime = 0;
+
+        this.triggerGesture(
+          'SINGLE_TAP'
+        );
+      }, DOUBLE_TAP_MAX_DELAY);
+  }
+
+  flushPendingTap() {
+    if (this.pendingTapTimeout === null) {
+      return;
+    }
+
+    this.clearPendingTap();
+
+    this.triggerGesture(
+      'SINGLE_TAP'
+    );
+  }
+
+  handlePointerCancel(event) {
+    if (
+      this.activePointerId !== null &&
+      event.pointerId !==
+      this.activePointerId
+    ) {
+      return;
+    }
+
+    this.isTracking = false;
+    this.activePointerId = null;
+
+    this.element.classList.remove(
+      'active-swiping'
+    );
+
+    this.clearPendingTap();
+  }
+
+  handleKeyDown(event) {
+    if (
+      event.altKey ||
+      event.ctrlKey ||
+      event.metaKey
+    ) {
+      return;
+    }
+
+    const mapping = {
+      ArrowUp: 'UP',
+      ArrowDown: 'DOWN',
+      ArrowLeft: 'LEFT',
+      ArrowRight: 'RIGHT',
+      '1': 'UP_LEFT',
+      '2': 'UP',
+      '3': 'UP_RIGHT',
+      '4': 'LEFT',
+      '5': 'RIGHT',
+      '6': 'DOWN_LEFT',
+      '7': 'DOWN',
+      '8': 'DOWN_RIGHT',
+      '9': 'DOUBLE_TAP',
+      '0': 'SINGLE_TAP',
+      ' ': 'SINGLE_TAP',
+      Enter: 'SINGLE_TAP',
+      Home: 'DOWN',
+      End: 'UP_LEFT',
+      PageUp: 'DOUBLE_TAP',
+      PageDown: 'UP_RIGHT'
+    };
+
+    if (mapping[event.key]) {
+      event.preventDefault();
+
+      this.flushPendingTap();
+
+      this.triggerGesture(
+        mapping[event.key]
+      );
+      return;
+    }
+
+    if (event.key === 'Backspace') {
+      event.preventDefault();
+
+      this.clearPendingTap();
+      undoPinGesture();
+      return;
+    }
+
+    if (event.key === 'Escape') {
+      event.preventDefault();
+
+      this.clearPendingTap();
+      clearPinGestures();
     }
   }
 
   triggerGesture(gesture) {
-    if (this.onGestureDetected) {
-      this.onGestureDetected(gesture);
+    const normalized =
+      normalizeGesture(gesture);
+
+    if (!isValidGesture(normalized)) {
+      return;
     }
+
+    if (
+      typeof this.onGestureDetected ===
+      'function'
+    ) {
+      this.onGestureDetected(
+        normalized
+      );
+    }
+  }
+
+  destroy() {
+    this.clearPendingTap();
+
+    if (!this.element) return;
+
+    this.element.removeEventListener(
+      'pointerdown',
+      this.boundPointerDown
+    );
+
+    this.element.removeEventListener(
+      'pointermove',
+      this.boundPointerMove
+    );
+
+    this.element.removeEventListener(
+      'pointerup',
+      this.boundPointerUp
+    );
+
+    this.element.removeEventListener(
+      'pointercancel',
+      this.boundPointerCancel
+    );
+
+    this.element.removeEventListener(
+      'keydown',
+      this.boundKeyDown
+    );
+
+    this.element.classList.remove(
+      'active-swiping'
+    );
   }
 }
 
-/**
- * Classify vector into one of 8 compass directions
- * Screen coordinate system: deltaX is + Right, deltaY is + Down
- */
-export function classifyDirection(deltaX, deltaY, minDistance = 35) {
-  const absX = Math.abs(deltaX);
-  const absY = Math.abs(deltaY);
+/* ============================================================
+   EIGHT-WAY DIRECTION CLASSIFICATION
+============================================================ */
 
-  if (absX < minDistance && absY < minDistance) {
+export function classifyDirection(
+  deltaX,
+  deltaY,
+  minDistance = MIN_SWIPE_DISTANCE
+) {
+  if (
+    !Number.isFinite(deltaX) ||
+    !Number.isFinite(deltaY)
+  ) {
     return 'NONE';
   }
 
-  // Calculate angle in degrees (-180 to +180)
-  const angle = Math.atan2(deltaY, deltaX) * (180 / Math.PI);
-
-  // 8 Sectors (each 45 degrees wide)
-  if (angle >= -112.5 && angle < -67.5) {
-    return 'UP'; // -90 deg
-  } else if (angle >= -67.5 && angle < -22.5) {
-    return 'UP_RIGHT'; // -45 deg
-  } else if (angle >= -22.5 && angle < 22.5) {
-    return 'RIGHT'; // 0 deg
-  } else if (angle >= 22.5 && angle < 67.5) {
-    return 'DOWN_RIGHT'; // +45 deg
-  } else if (angle >= 67.5 && angle < 112.5) {
-    return 'DOWN'; // +90 deg
-  } else if (angle >= 112.5 && angle < 157.5) {
-    return 'DOWN_LEFT'; // +135 deg
-  } else if (angle >= -157.5 && angle < -112.5) {
-    return 'UP_LEFT'; // -135 deg
-  } else {
-    return 'LEFT'; // 180 or -180 deg
+  if (
+    Math.hypot(deltaX, deltaY) <
+    minDistance
+  ) {
+    return 'NONE';
   }
+
+  const angle =
+    Math.atan2(
+      deltaY,
+      deltaX
+    ) * 180 / Math.PI;
+
+  if (
+    angle >= -112.5 &&
+    angle < -67.5
+  ) {
+    return 'UP';
+  }
+
+  if (
+    angle >= -67.5 &&
+    angle < -22.5
+  ) {
+    return 'UP_RIGHT';
+  }
+
+  if (
+    angle >= -22.5 &&
+    angle < 22.5
+  ) {
+    return 'RIGHT';
+  }
+
+  if (
+    angle >= 22.5 &&
+    angle < 67.5
+  ) {
+    return 'DOWN_RIGHT';
+  }
+
+  if (
+    angle >= 67.5 &&
+    angle < 112.5
+  ) {
+    return 'DOWN';
+  }
+
+  if (
+    angle >= 112.5 &&
+    angle < 157.5
+  ) {
+    return 'DOWN_LEFT';
+  }
+
+  if (
+    angle >= -157.5 &&
+    angle < -112.5
+  ) {
+    return 'UP_LEFT';
+  }
+
+  return 'LEFT';
 }
 
-/**
- * Handle Gesture for PIN Verification Screen
- */
-let onPinCompleteCallback = null;
+/* ============================================================
+   PIN CALLBACK
+============================================================ */
 
-export function setPinCompleteCallback(cb) {
-  onPinCompleteCallback = cb;
+export function setPinCompleteCallback(callback) {
+  onPinCompleteCallback =
+    typeof callback === 'function'
+      ? callback
+      : null;
 }
+
+/* ============================================================
+   PIN ENTRY
+============================================================ */
 
 export function handlePinGesture(gesture) {
-  if (state.enteredPin.length >= 4) return;
+  ensurePinState();
 
-  // Reset 12-second inactivity timer
-  resetInactivityTimer();
+  if (
+    pinSubmissionPending ||
+    state.enteredPin.length >= PIN_LENGTH
+  ) {
+    return;
+  }
 
-  // Normalize TAP to SINGLE_TAP
-  const normalizedGesture = gesture === 'TAP' ? 'SINGLE_TAP' : gesture;
-  const digit = GESTURE_TO_DIGIT[normalizedGesture] !== undefined 
-    ? GESTURE_TO_DIGIT[normalizedGesture] 
-    : 0;
+  const normalized =
+    normalizeGesture(gesture);
 
-  state.enteredPin.push(normalizedGesture);
+  if (!isValidGesture(normalized)) {
+    return;
+  }
 
-  // Map distinct haptic pulse pattern
-  let haptic = 80;
-  if (normalizedGesture === 'DOUBLE_TAP') haptic = [40, 50, 40];
-  else if (normalizedGesture === 'SINGLE_TAP') haptic = 40;
-  else if (normalizedGesture.includes('UP')) haptic = 70;
-  else if (normalizedGesture.includes('DOWN')) haptic = 90;
+  state.enteredPin.push(
+    normalized
+  );
 
-  // Provide tactile and audio feedback
+  const count =
+    state.enteredPin.length;
+
+  const haptic =
+    normalized === 'DOUBLE_TAP'
+      ? [40, 50, 40]
+      : normalized === 'SINGLE_TAP'
+        ? 40
+        : normalized.includes('DOWN')
+          ? 90
+          : 70;
+
+  // Never announce the actual digit or
+  // direction during PIN verification.
   provideFeedback({
-    text: `Digit ${digit} registered.`,
-    gesture: normalizedGesture,
+    text:
+      `Gesture ${count} of ${PIN_LENGTH} registered.`,
     hapticPattern: haptic,
-    hapticLabel: `Digit: ${digit} (${normalizedGesture})`,
-    priority: true
+    hapticLabel:
+      `PIN gesture ${count} accepted`,
+    priority: false
   });
 
   updatePinSlotsVisual();
 
-  // If 4 digits entered, evaluate PIN
-  if (state.enteredPin.length === 4) {
-    if (inactivityTimer) clearTimeout(inactivityTimer);
-    setTimeout(() => {
-      if (onPinCompleteCallback) {
-        onPinCompleteCallback([...state.enteredPin]);
-      }
-    }, 250);
+  if (count === PIN_LENGTH) {
+    cancelInactivityTimer();
+    cancelCompletionTimer();
+
+    pinSubmissionPending = true;
+
+    const completedSequence = [
+      ...state.enteredPin
+    ];
+
+    const version = ++pinEntryVersion;
+
+    completionTimer =
+      setTimeout(() => {
+        completionTimer = null;
+
+        if (
+          version !== pinEntryVersion ||
+          !pinSubmissionPending
+        ) {
+          return;
+        }
+
+        if (
+          typeof onPinCompleteCallback ===
+          'function'
+        ) {
+          try {
+            const result =
+              onPinCompleteCallback(
+                completedSequence
+              );
+
+            if (
+              result &&
+              typeof result.catch ===
+              'function'
+            ) {
+              result.catch(error => {
+                console.error(
+                  '[PALMLOCK GESTURES] PIN callback failed:',
+                  error
+                );
+
+                clearPinGestures(true);
+              });
+            }
+          } catch (error) {
+            console.error(
+              '[PALMLOCK GESTURES] PIN callback failed:',
+              error
+            );
+
+            clearPinGestures(true);
+          }
+        } else {
+          clearPinGestures(true);
+        }
+      }, 250);
+  } else {
+    resetInactivityTimer();
   }
 }
 
+/* ============================================================
+   UNDO
+============================================================ */
+
 export function undoPinGesture() {
-  resetInactivityTimer();
+  ensurePinState();
+
+  if (pinSubmissionPending) {
+    return;
+  }
+
+  if (state.enteredPin.length === 0) {
+    return;
+  }
+
+  state.enteredPin.pop();
+
+  updatePinSlotsVisual();
+
   if (state.enteredPin.length > 0) {
-    const removed = state.enteredPin.pop();
-    updatePinSlotsVisual();
+    resetInactivityTimer();
+  } else {
+    cancelInactivityTimer();
+  }
+
+  provideFeedback({
+    text:
+      'Last PIN gesture removed.',
+    hapticPattern: 60,
+    priority: false
+  });
+}
+
+/* ============================================================
+   CLEAR PIN
+============================================================ */
+
+export function clearPinGestures(
+  silent = false
+) {
+  cancelInactivityTimer();
+  cancelCompletionTimer();
+
+  pinEntryVersion++;
+  pinSubmissionPending = false;
+
+  state.enteredPin = [];
+
+  updatePinSlotsVisual();
+
+  if (!silent) {
     provideFeedback({
-      text: `Removed last gesture: ${removed}`,
-      gesture: 'DOWN',
-      hapticPattern: 60,
-      hapticLabel: 'Undo Gesture'
+      text:
+        'PIN entry cleared.',
+      hapticPattern: [50, 50, 50],
+      priority: false
     });
   }
 }
 
-export function clearPinGestures() {
-  if (inactivityTimer) clearTimeout(inactivityTimer);
-  state.enteredPin = [];
-  updatePinSlotsVisual();
-  provideFeedback({
-    text: 'Cleared all entered gestures',
-    gesture: 'ERROR',
-    hapticPattern: [50, 50, 50],
-    hapticLabel: 'PIN Cleared'
-  });
-}
+/* ============================================================
+   INACTIVITY TIMEOUT
+============================================================ */
 
 function resetInactivityTimer() {
-  if (inactivityTimer) clearTimeout(inactivityTimer);
-  inactivityTimer = setTimeout(() => {
-    if (state.enteredPin.length > 0 && state.enteredPin.length < 4) {
-      clearPinGestures();
-      provideFeedback({
-        text: 'PIN entry timed out after inactivity. Slots cleared.',
-        gesture: 'ERROR'
-      });
-    }
-  }, INACTIVITY_TIMEOUT_MS);
+  cancelInactivityTimer();
+
+  inactivityTimer =
+    setTimeout(() => {
+      ensurePinState();
+
+      if (
+        state.enteredPin.length > 0 &&
+        state.enteredPin.length <
+        PIN_LENGTH
+      ) {
+        clearPinGestures(true);
+
+        provideFeedback({
+          text:
+            'PIN entry timed out. Please start again.',
+          gesture: 'ERROR',
+          priority: true
+        });
+      }
+    }, INACTIVITY_TIMEOUT_MS);
 }
 
+/* ============================================================
+   PIN SLOT DISPLAY
+============================================================ */
+
 function updatePinSlotsVisual() {
-  for (let i = 0; i < 4; i++) {
-    const slot = document.getElementById(`pin-slot-${i}`);
+  ensurePinState();
+
+  for (
+    let index = 0;
+    index < PIN_LENGTH;
+    index++
+  ) {
+    const slot =
+      document.getElementById(
+        `pin-slot-${index}`
+      );
+
     if (!slot) continue;
 
-    if (i < state.enteredPin.length) {
-      const g = state.enteredPin[i];
-      slot.classList.add('filled');
-      
-      let symbol = '●';
-      if (g === 'UP') symbol = '↑';
-      else if (g === 'DOWN') symbol = '↓';
-      else if (g === 'LEFT') symbol = '←';
-      else if (g === 'RIGHT') symbol = '→';
-      else if (g === 'UP_LEFT') symbol = '↖';
-      else if (g === 'UP_RIGHT') symbol = '↗';
-      else if (g === 'DOWN_LEFT') symbol = '↙';
-      else if (g === 'DOWN_RIGHT') symbol = '↘';
-      else if (g === 'DOUBLE_TAP') symbol = '••';
-      else if (g === 'SINGLE_TAP' || g === 'TAP') symbol = '•';
+    const filled =
+      index < state.enteredPin.length;
 
-      slot.textContent = symbol;
-      slot.setAttribute('aria-label', `Slot ${i + 1}: ${g}`);
-    } else {
-      slot.classList.remove('filled');
-      slot.textContent = '-';
-      slot.setAttribute('aria-label', `Slot ${i + 1}: Empty`);
-    }
+    slot.classList.toggle(
+      'filled',
+      filled
+    );
+
+    // Mask every gesture, including direction.
+    slot.textContent =
+      filled ? '●' : '–';
+
+    slot.setAttribute(
+      'aria-label',
+      `PIN slot ${index + 1}: ` +
+      (filled ? 'Filled' : 'Empty')
+    );
   }
 }
 
-/**
- * Shake-to-Clear motion gesture listener (opt-in)
- */
+/* ============================================================
+   SHAKE-TO-CLEAR
+============================================================ */
+
 export function setupShakeToClear(onShake) {
-  if (typeof window === 'undefined' || !window.DeviceMotionEvent) return;
+  if (
+    typeof window === 'undefined' ||
+    !window.DeviceMotionEvent
+  ) {
+    return;
+  }
 
-  let lastX = 0, lastY = 0, lastZ = 0;
-  let lastTime = 0;
-  const SHAKE_THRESHOLD = 20;
+  let lastX = null;
+  let lastY = null;
+  let lastZ = null;
+  let lastShakeTime = 0;
 
-  window.addEventListener('devicemotion', (e) => {
-    if (!state.preferences.motionGesturesEnabled) return;
+  const SHAKE_THRESHOLD = 22;
+  const SHAKE_COOLDOWN_MS = 1500;
 
-    const current = e.accelerationIncludingGravity;
-    if (!current) return;
-
-    const now = Date.now();
-    if (now - lastTime > 150) {
-      const diffTime = now - lastTime;
-      lastTime = now;
-
-      const speed = Math.abs(current.x + current.y + current.z - lastX - lastY - lastZ) / diffTime * 10000;
-      if (speed > SHAKE_THRESHOLD) {
-        if (onShake) onShake();
+  window.addEventListener(
+    'devicemotion',
+    event => {
+      if (
+        !state.preferences
+          ?.motionGesturesEnabled
+      ) {
+        return;
       }
 
-      lastX = current.x;
-      lastY = current.y;
-      lastZ = current.z;
+      const acceleration =
+        event.accelerationIncludingGravity;
+
+      if (!acceleration) return;
+
+      const x = acceleration.x;
+      const y = acceleration.y;
+      const z = acceleration.z;
+
+      if (
+        !Number.isFinite(x) ||
+        !Number.isFinite(y) ||
+        !Number.isFinite(z)
+      ) {
+        return;
+      }
+
+      if (lastX === null) {
+        lastX = x;
+        lastY = y;
+        lastZ = z;
+        return;
+      }
+
+      const movement =
+        Math.hypot(
+          x - lastX,
+          y - lastY,
+          z - lastZ
+        );
+
+      lastX = x;
+      lastY = y;
+      lastZ = z;
+
+      const now = Date.now();
+
+      if (
+        movement >= SHAKE_THRESHOLD &&
+        now - lastShakeTime >=
+        SHAKE_COOLDOWN_MS
+      ) {
+        lastShakeTime = now;
+
+        if (
+          typeof onShake ===
+          'function'
+        ) {
+          onShake();
+        } else {
+          clearPinGestures();
+        }
+      }
     }
-  });
+  );
 }

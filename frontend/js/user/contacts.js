@@ -1,330 +1,1283 @@
+
 /**
- * PALMLOCK — Touch Beyond Vision
- * Trusted Emergency Contacts & Guardian Management
- * Supports Primary/Secondary Designation, OTP Verification Simulation,
- * Indian Phone Numbers (+91) & Broadcast Synchronization.
+ * PALMLOCK — Trusted Emergency Contacts
+ * MongoDB-backed guardian management.
+ *
+ * Features:
+ * - Load contacts from MongoDB
+ * - Add primary and secondary guardians
+ * - Simulated six-digit OTP verification
+ * - Resend simulated OTP
+ * - Set primary guardian
+ * - Enable or disable duress notifications
+ * - Delete guardians
+ * - Synchronize guardian onboarding status
+ *
+ * IMPORTANT:
+ * OTP delivery and emergency notifications are simulated.
+ * No real SMS is sent.
  */
 
 import { state } from './state.js';
-import { provideFeedback } from './accessibility.js';
-import { openModal, closeModal } from './navigation.js';
+
+import {
+  provideFeedback
+} from './accessibility.js';
+
+import {
+  openModal,
+  closeModal
+} from './navigation.js';
+
+/* ============================================================
+   CONFIGURATION
+============================================================ */
+
+const API_BASE =
+  window.location.port === '5000'
+    ? '/api'
+    : window.location.protocol.startsWith('http')
+      ? `${window.location.protocol}//${window.location.hostname}:5000/api`
+      : '/api';
+
+const REQUEST_TIMEOUT_MS = 12000;
+const MAX_CONTACTS = 5;
 
 let activeVerificationContactId = null;
+let contactBusy = false;
+let otpBusy = false;
+let mutationBusy = false;
+let initialized = false;
 
-/**
- * Initialize Contacts UI & Form Listeners
- */
-export function initContacts() {
-  const triggerBtn = document.getElementById('btn-add-contact-trigger');
-  if (triggerBtn) {
-    triggerBtn.addEventListener('click', () => {
-      openModal('modal-add-contact');
-    });
+/* ============================================================
+   COMMON HELPERS
+============================================================ */
+
+function el(id) {
+  return document.getElementById(id);
+}
+
+function feedback(text, success = false) {
+  provideFeedback({
+    text,
+    gesture: success ? 'SUCCESS' : 'ERROR',
+    priority: true
+  });
+}
+
+function token() {
+  try {
+    return (
+      sessionStorage.getItem('palmlock_token') ||
+      localStorage.getItem('palmlock_token') ||
+      state.authToken ||
+      null
+    );
+  } catch (_) {
+    return state.authToken || null;
+  }
+}
+
+function emitContactsUpdated() {
+  // This event is emitted after successful contact
+  // mutations and refreshes, not from loadContacts().
+  //
+  // app.js can safely listen for it and perform
+  // its own verification refresh.
+
+  document.dispatchEvent(
+    new CustomEvent('palmlock:contacts-updated')
+  );
+}
+
+function setButtonBusy(button, busy, label) {
+  if (!button) return;
+
+  if (busy) {
+    if (!button.dataset.originalText) {
+      button.dataset.originalText =
+        button.textContent;
+    }
+
+    button.disabled = true;
+    button.textContent = label;
+  } else {
+    button.disabled = false;
+
+    if (button.dataset.originalText) {
+      button.textContent =
+        button.dataset.originalText;
+
+      delete button.dataset.originalText;
+    }
+  }
+}
+
+function normalizePhone(value) {
+  const digits =
+    String(value || '').replace(/\D/g, '');
+
+  if (/^[6-9]\d{9}$/.test(digits)) {
+    return `+91${digits}`;
   }
 
-  const cancelBtn = document.getElementById('btn-cancel-add-contact');
-  if (cancelBtn) {
-    cancelBtn.addEventListener('click', () => {
-      closeModal('modal-add-contact');
-    });
+  if (/^91[6-9]\d{9}$/.test(digits)) {
+    return `+${digits}`;
   }
 
-  const form = document.getElementById('form-new-contact');
-  if (form) {
-    form.addEventListener('submit', (e) => {
-      e.preventDefault();
-      handleAddNewContact();
-    });
+  throw new Error(
+    'Enter a valid 10-digit Indian mobile number.'
+  );
+}
+
+function escapeHTML(value) {
+  return String(value ?? '')
+    .replace(/[&<>"']/g, char => ({
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#39;'
+    }[char]));
+}
+
+function normalizeContact(contact) {
+  if (!contact || typeof contact !== 'object') {
+    throw new Error('Invalid guardian record.');
   }
 
-  // OTP Verification Modal Submit
-  const formOtp = document.getElementById('form-verify-otp');
-  if (formOtp) {
-    formOtp.addEventListener('submit', (e) => {
-      e.preventDefault();
-      handleVerifyContactOtp();
-    });
+  const id = contact.id || contact._id;
+
+  if (!id) {
+    throw new Error(
+      'Guardian record is missing an identifier.'
+    );
   }
 
-  const cancelOtpBtn = document.getElementById('btn-cancel-verify-otp');
-  if (cancelOtpBtn) {
-    cancelOtpBtn.addEventListener('click', () => {
-      closeModal('modal-verify-otp');
-      activeVerificationContactId = null;
-    });
+  return {
+    ...contact,
+    id: String(id),
+
+    isPrimary:
+      contact.isPrimary === true,
+
+    notifyOnDuress:
+      contact.notifyOnDuress === true,
+
+    verificationStatus:
+      contact.verificationStatus === 'verified'
+        ? 'verified'
+        : 'pending'
+  };
+}
+
+function updateContacts(contacts) {
+  if (!Array.isArray(contacts)) {
+    throw new Error(
+      'Invalid trusted contacts response.'
+    );
   }
+
+  state.contacts =
+    contacts.map(normalizeContact);
 
   renderContactsList();
 }
 
-/**
- * Render Contacts Cards with Full Verification & Notification Badges
- */
+function getContact(contactId) {
+  return Array.isArray(state.contacts)
+    ? state.contacts.find(
+        item => item.id === String(contactId)
+      )
+    : null;
+}
+
+/* ============================================================
+   API REQUESTS
+============================================================ */
+
+async function request(
+  path,
+  method = 'GET',
+  body
+) {
+  const authToken = token();
+
+  if (!authToken) {
+    throw new Error(
+      'Please sign in to manage contacts.'
+    );
+  }
+
+  const controller =
+    new AbortController();
+
+  const timeout = setTimeout(
+    () => controller.abort(),
+    REQUEST_TIMEOUT_MS
+  );
+
+  try {
+    const response = await fetch(
+      `${API_BASE}${path}`,
+      {
+        method,
+
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authToken}`
+        },
+
+        ...(body === undefined
+          ? {}
+          : {
+              body: JSON.stringify(body)
+            }),
+
+        signal: controller.signal
+      }
+    );
+
+    let data;
+
+    try {
+      data = await response.json();
+    } catch (_) {
+      throw new Error(
+        'Invalid response from contact server.'
+      );
+    }
+
+    if (
+      !response.ok ||
+      data.success === false
+    ) {
+      const error = new Error(
+        data.error ||
+        data.message ||
+        'Contact request failed.'
+      );
+
+      error.status = response.status;
+      throw error;
+    }
+
+    return data;
+  } catch (error) {
+    if (error.name === 'AbortError') {
+      throw new Error(
+        'Contact request timed out. Please retry.'
+      );
+    }
+
+    if (error instanceof TypeError) {
+      throw new Error(
+        'Cannot connect to contact server.'
+      );
+    }
+
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+/* ============================================================
+   INITIALIZATION
+============================================================ */
+
+export function initContacts() {
+  if (initialized) return;
+
+  initialized = true;
+
+  if (!Array.isArray(state.contacts)) {
+    state.contacts = [];
+  }
+
+  /* ---------------- ADD CONTACT MODAL ---------------- */
+
+  el('btn-add-contact-trigger')
+    ?.addEventListener('click', () => {
+      if (!token()) {
+        feedback(
+          'Please sign in before adding a guardian.'
+        );
+        return;
+      }
+
+      if (state.contacts.length >= MAX_CONTACTS) {
+        feedback(
+          `Maximum ${MAX_CONTACTS} trusted contacts allowed.`
+        );
+        return;
+      }
+
+      const primaryCheckbox =
+        el('contact-is-primary');
+
+      const notifyCheckbox =
+        el('contact-duress-notify');
+
+      // The first guardian must be primary.
+      if (primaryCheckbox) {
+        primaryCheckbox.checked =
+          state.contacts.length === 0;
+      }
+
+      // Emergency notifications default to enabled.
+      if (notifyCheckbox) {
+        notifyCheckbox.checked = true;
+      }
+
+      openModal('modal-add-contact');
+    });
+
+  el('btn-cancel-add-contact')
+    ?.addEventListener('click', () => {
+      if (contactBusy) return;
+
+      closeModal('modal-add-contact');
+    });
+
+  el('form-new-contact')
+    ?.addEventListener(
+      'submit',
+      async event => {
+        event.preventDefault();
+        await handleAddNewContact();
+      }
+    );
+
+  /* ---------------- OTP MODAL ---------------- */
+
+  el('form-verify-otp')
+    ?.addEventListener(
+      'submit',
+      async event => {
+        event.preventDefault();
+        await handleVerifyContactOtp();
+      }
+    );
+
+  el('btn-cancel-verify-otp')
+    ?.addEventListener('click', () => {
+      if (otpBusy) return;
+
+      closeModal('modal-verify-otp');
+
+      activeVerificationContactId = null;
+    });
+
+  /* ---------------- INITIAL DISPLAY ---------------- */
+
+  renderContactsList();
+}
+
+/* ============================================================
+   LOAD CONTACTS FROM MONGODB
+============================================================ */
+
+export async function loadContacts() {
+  if (!token()) {
+    updateContacts([]);
+    return [];
+  }
+
+  try {
+    const data =
+      await request('/contacts');
+
+    if (!Array.isArray(data.contacts)) {
+      throw new Error(
+        'Invalid contacts response.'
+      );
+    }
+
+    updateContacts(data.contacts);
+
+    // IMPORTANT:
+    // Do not emit palmlock:contacts-updated here.
+    // app.js uses that event to trigger another load.
+    // Emitting here would cause an infinite loop.
+
+    return state.contacts;
+  } catch (error) {
+    console.warn(
+      '[PALMLOCK CONTACTS] Load failed:',
+      error.message
+    );
+
+    throw error;
+  }
+}
+
+/* ============================================================
+   CONTACT CARD RENDERING
+============================================================ */
+
 export function renderContactsList() {
-  const container = document.getElementById('contacts-list-container');
+  const container =
+    el('contacts-list-container');
+
   if (!container) return;
 
   container.innerHTML = '';
 
-  if (state.contacts.length === 0) {
-    container.innerHTML = `
-      <div class="card" style="text-align: center; color: var(--text-muted);">
-        No trusted contacts registered. Add at least one emergency guardian.
-      </div>
-    `;
+  if (
+    !Array.isArray(state.contacts) ||
+    state.contacts.length === 0
+  ) {
+    const empty =
+      document.createElement('div');
+
+    empty.className = 'card';
+    empty.style.textAlign = 'center';
+
+    empty.textContent =
+      'No trusted contacts registered. ' +
+      'Add and verify a primary guardian ' +
+      'to complete your emergency setup.';
+
+    container.appendChild(empty);
     return;
   }
 
-  state.contacts.forEach((contact, index) => {
-    const card = document.createElement('article');
-    card.className = 'contact-item-card';
-    card.setAttribute('role', 'listitem');
-    card.setAttribute('aria-label', `Guardian ${index + 1}: ${contact.name}, ${contact.relationship}, ${contact.phone}, Status: ${contact.verificationStatus}`);
+  state.contacts.forEach(
+    (contact, index) => {
+      const verified =
+        contact.verificationStatus === 'verified';
 
-    const isPrimary = contact.isPrimary || index === 0;
-    const vStatus = contact.verificationStatus || 'verified';
-    const nStatus = contact.notificationStatus || 'acknowledged';
+      const primary =
+        contact.isPrimary === true;
 
-    let vBadgeClass = 'history-badge success';
-    let vText = 'Verified Guardian';
-    if (vStatus === 'pending') {
-      vBadgeClass = 'history-badge pending';
-      vText = 'Verification Pending (OTP Required)';
-    } else if (vStatus === 'failed') {
-      vBadgeClass = 'history-badge duress';
-      vText = 'Verification Failed';
-    }
+      const notificationsEnabled =
+        contact.notifyOnDuress === true;
 
-    card.innerHTML = `
-      <div class="contact-info" style="flex: 1;">
-        <div style="display: flex; align-items: center; gap: 8px;">
-          <div class="contact-name">${escapeHTML(contact.name)}</div>
-          <span class="contact-tag" style="background: ${isPrimary ? 'var(--accent-primary)' : 'var(--bg-tertiary)'}; color: ${isPrimary ? '#000' : 'var(--text-primary)'}; font-weight: bold;">
-            ${isPrimary ? 'PRIMARY' : 'SECONDARY'}
-          </span>
+      const card =
+        document.createElement('article');
+
+      card.className =
+        'contact-item-card';
+
+      card.setAttribute(
+        'role',
+        'listitem'
+      );
+
+      card.setAttribute(
+        'aria-label',
+        `Guardian ${index + 1}: ` +
+        `${contact.name}, ` +
+        `${contact.relationship || 'Guardian'}, ` +
+        `${contact.phone}. ` +
+        `${primary ? 'Primary' : 'Secondary'}. ` +
+        `${verified ? 'Verified' : 'Verification pending'}. ` +
+        `Emergency notifications ` +
+        `${notificationsEnabled ? 'enabled' : 'disabled'}.`
+      );
+
+      const name =
+        escapeHTML(contact.name);
+
+      const phone =
+        escapeHTML(contact.phone);
+
+      const relationship =
+        escapeHTML(
+          contact.relationship || 'Guardian'
+        );
+
+      card.innerHTML = `
+        <div class="contact-info"
+             style="flex:1;min-width:0">
+
+          <div style="
+            display:flex;
+            align-items:center;
+            gap:8px;
+            flex-wrap:wrap
+          ">
+            <div class="contact-name">
+              ${name}
+            </div>
+
+            <span class="contact-tag">
+              ${primary ? 'PRIMARY' : 'SECONDARY'}
+            </span>
+          </div>
+
+          <div class="contact-phone"
+               style="
+                 font-family:var(--font-family-mono);
+                 margin-top:4px;
+                 overflow-wrap:anywhere
+               ">
+            ${phone}
+          </div>
+
+          <div style="
+            font-size:.8rem;
+            color:var(--text-secondary);
+            margin-top:2px
+          ">
+            ${relationship}
+          </div>
+
+          <div style="
+            margin-top:8px;
+            display:flex;
+            gap:6px;
+            flex-wrap:wrap
+          ">
+            <span class="history-badge ${verified ? 'success' : 'pending'}">
+              ${verified ? 'Verified Guardian' : 'Verification Pending'}
+            </span>
+
+            ${
+              notificationsEnabled
+                ? '<span class="history-badge duress">Duress Alert ON</span>'
+                : '<span class="contact-tag">Duress Alert OFF</span>'
+            }
+          </div>
+
+          ${
+            primary &&
+            verified &&
+            notificationsEnabled
+              ? `
+                <p style="
+                  margin-top:8px;
+                  font-size:.8rem;
+                  color:var(--text-secondary)
+                ">
+                  Guardian setup requirements met
+                </p>
+              `
+              : ''
+          }
         </div>
-        <div class="contact-phone" style="font-family: var(--font-family-mono); margin-top: 4px;">${escapeHTML(contact.phone)}</div>
-        <div style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 2px;">
-          ${escapeHTML(contact.relationship || 'Emergency Guardian')}
-        </div>
-        
-        <div style="margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center;">
-          <span class="${vBadgeClass}">${vText}</span>
-          <span class="contact-tag" style="font-size: 0.72rem;">Dispatch: ${nStatus.toUpperCase()}</span>
-          ${contact.notifyOnDuress ? '<span class="history-badge duress" style="font-size: 0.72rem;">Duress Alert ON</span>' : ''}
-        </div>
-      </div>
-      
-      <div style="display: flex; flex-direction: column; gap: 6px; justify-content: center; align-items: flex-end;">
-        ${vStatus === 'pending' ? `
-          <button type="button" class="btn btn-secondary btn-verify-contact" data-id="${contact.id}" style="font-size: 0.75rem; padding: 4px 8px;">
-            Verify OTP
+
+        <div style="
+          display:flex;
+          flex-direction:column;
+          gap:8px;
+          align-items:flex-end
+        ">
+
+          ${
+            !verified
+              ? `
+                <button
+                  type="button"
+                  class="btn btn-secondary btn-verify-contact"
+                >
+                  Verify OTP
+                </button>
+              `
+              : ''
+          }
+
+          <button
+            type="button"
+            class="btn btn-secondary btn-toggle-notifications"
+            aria-label="${
+              notificationsEnabled
+                ? `Disable emergency notifications for ${name}`
+                : `Enable emergency notifications for ${name}`
+            }"
+            aria-pressed="${notificationsEnabled}"
+            style="font-size:.78rem"
+          >
+            ${
+              notificationsEnabled
+                ? 'Alerts: ON'
+                : 'Alerts: OFF'
+            }
           </button>
-        ` : ''}
-        
-        <div style="display: flex; gap: 4px;">
-          <button type="button" class="btn-icon-access btn-toggle-primary" data-id="${contact.id}" title="${isPrimary ? 'Currently Primary' : 'Make Primary'}" aria-label="Make ${contact.name} primary contact">
-            <span style="font-size: 1rem; color: ${isPrimary ? 'var(--accent-primary)' : 'var(--text-muted)'};">★</span>
-          </button>
-          <button type="button" class="btn-icon-access btn-delete-contact" data-id="${contact.id}" aria-label="Remove ${contact.name} from emergency contacts" title="Delete Contact">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
-          </button>
+
+          <div style="
+            display:flex;
+            gap:6px
+          ">
+            <button
+              type="button"
+              class="btn-icon-access btn-toggle-primary"
+              aria-label="${
+                primary
+                  ? `${name} is the primary guardian`
+                  : `Make ${name} primary guardian`
+              }"
+              title="${
+                primary
+                  ? 'Current Primary'
+                  : 'Make Primary'
+              }"
+              ${primary ? 'disabled' : ''}
+            >
+              ★
+            </button>
+
+            <button
+              type="button"
+              class="btn-icon-access btn-delete-contact"
+              aria-label="Delete ${name}"
+              title="Delete Contact"
+            >
+              ✕
+            </button>
+          </div>
         </div>
-      </div>
-    `;
+      `;
 
-    // Verify OTP Button
-    const verifyBtn = card.querySelector('.btn-verify-contact');
-    if (verifyBtn) {
-      verifyBtn.addEventListener('click', () => {
-        openOtpVerificationModal(contact.id);
-      });
+      /* ---------------- VERIFY OTP ---------------- */
+
+      card.querySelector(
+        '.btn-verify-contact'
+      )?.addEventListener(
+        'click',
+        () => {
+          openOtpVerificationModal(
+            contact.id
+          );
+        }
+      );
+
+      /* ---------------- SET PRIMARY ---------------- */
+
+      card.querySelector(
+        '.btn-toggle-primary'
+      )?.addEventListener(
+        'click',
+        async () => {
+          await setPrimaryContact(
+            contact.id
+          );
+        }
+      );
+
+      /* ---------------- TOGGLE NOTIFICATIONS ---------------- */
+
+      card.querySelector(
+        '.btn-toggle-notifications'
+      )?.addEventListener(
+        'click',
+        async () => {
+          await toggleContactNotifications(
+            contact.id
+          );
+        }
+      );
+
+      /* ---------------- DELETE CONTACT ---------------- */
+
+      card.querySelector(
+        '.btn-delete-contact'
+      )?.addEventListener(
+        'click',
+        async () => {
+          await deleteContact(
+            contact.id
+          );
+        }
+      );
+
+      container.appendChild(card);
     }
-
-    // Toggle Primary
-    const starBtn = card.querySelector('.btn-toggle-primary');
-    if (starBtn) {
-      starBtn.addEventListener('click', () => {
-        setPrimaryContact(contact.id);
-      });
-    }
-
-    // Delete
-    const deleteBtn = card.querySelector('.btn-delete-contact');
-    if (deleteBtn) {
-      deleteBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        deleteContact(contact.id);
-      });
-    }
-
-    container.appendChild(card);
-  });
+  );
 }
 
-/**
- * Add New Contact with Indian Phone Validation
- */
-function handleAddNewContact() {
-  const nameInput = document.getElementById('contact-name-input');
-  const relInput = document.getElementById('contact-relationship-input');
-  const phoneInput = document.getElementById('contact-phone-input');
-  const duressInput = document.getElementById('contact-duress-notify');
-  const isPrimaryCheck = document.getElementById('contact-is-primary');
+/* ============================================================
+   ADD NEW CONTACT
+============================================================ */
 
-  const name = nameInput?.value.trim();
-  const rel = relInput?.value.trim();
-  let phone = phoneInput?.value.trim() || '';
-  const notify = duressInput?.checked ?? true;
-  const isPrimary = isPrimaryCheck ? isPrimaryCheck.checked : (state.contacts.length === 0);
+async function handleAddNewContact() {
+  if (contactBusy) return;
 
-  if (!name || !phone) {
-    provideFeedback({
-      text: 'Please enter both a contact name and phone number.',
-      gesture: 'ERROR'
-    });
+  const form =
+    el('form-new-contact');
+
+  const submitButton =
+    form?.querySelector(
+      'button[type="submit"]'
+    );
+
+  try {
+    if (!token()) {
+      throw new Error(
+        'Please sign in before adding a guardian.'
+      );
+    }
+
+    const name =
+      el('contact-name-input')?.value.trim();
+
+    const relationship =
+      el('contact-relationship-input')?.value.trim() ||
+      'Guardian';
+
+    const phone =
+      normalizePhone(
+        el('contact-phone-input')?.value
+      );
+
+    if (!name) {
+      throw new Error(
+        'Contact name is required.'
+      );
+    }
+
+    if (
+      state.contacts.length >= MAX_CONTACTS
+    ) {
+      throw new Error(
+        `Maximum ${MAX_CONTACTS} trusted contacts allowed.`
+      );
+    }
+
+    const isFirstContact =
+      state.contacts.length === 0;
+
+    const isPrimary =
+      isFirstContact ||
+      (
+        el('contact-is-primary')?.checked ??
+        false
+      );
+
+    const notifyOnDuress =
+      el('contact-duress-notify')?.checked ??
+      true;
+
+    contactBusy = true;
+
+    setButtonBusy(
+      submitButton,
+      true,
+      'Saving contact...'
+    );
+
+    const data =
+      await request(
+        '/contacts',
+        'POST',
+        {
+          name,
+          phone,
+          relationship,
+          isPrimary,
+          notifyOnDuress
+        }
+      );
+
+    const newContactId =
+      data.contact?.id ||
+      data.contact?._id ||
+      null;
+
+    // Fetch the authoritative MongoDB records.
+    await loadContacts();
+
+    // Notify app.js that guardian data changed.
+    emitContactsUpdated();
+
+    closeModal('modal-add-contact');
+
+    form?.reset();
+
+    feedback(
+      `Contact ${name} saved successfully. ` +
+      'A simulated six-digit OTP was generated. ' +
+      'Check your backend terminal for the code.',
+      true
+    );
+
+    if (newContactId) {
+      openOtpVerificationModal(
+        String(newContactId)
+      );
+    }
+  } catch (error) {
+    console.error(
+      '[PALMLOCK CONTACTS] Add failed:',
+      error
+    );
+
+    feedback(error.message);
+  } finally {
+    contactBusy = false;
+
+    setButtonBusy(
+      submitButton,
+      false
+    );
+  }
+}
+
+/* ============================================================
+   OPEN OTP VERIFICATION MODAL
+============================================================ */
+
+export function openOtpVerificationModal(
+  contactId
+) {
+  const contact =
+    getContact(contactId);
+
+  if (!contact) {
+    feedback(
+      'Contact not found. Refresh the contact list.'
+    );
     return;
   }
 
-  // Ensure Indian +91 format if entered as 10 digits
-  if (/^\d{10}$/.test(phone)) {
-    phone = `+91 ${phone.slice(0, 5)} ${phone.slice(5)}`;
+  if (
+    contact.verificationStatus === 'verified'
+  ) {
+    feedback(
+      'This contact is already verified.',
+      true
+    );
+    return;
   }
 
-  const generatedOtp = Math.floor(1000 + Math.random() * 9000).toString();
+  activeVerificationContactId =
+    contact.id;
 
-  const newContact = {
-    id: `cnt_${Date.now()}`,
-    name: name,
-    relationship: rel || 'Emergency Guardian',
-    phone: phone,
-    isPrimary: isPrimary,
-    notifyOnDuress: notify,
-    verificationStatus: 'pending', // Starts in pending OTP verification
-    notificationStatus: 'pending',
-    otpCode: generatedOtp
-  };
+  const input =
+    el('input-verify-otp');
 
-  if (isPrimary) {
-    state.contacts.forEach(c => c.isPrimary = false);
+  if (input) {
+    input.value = '';
+
+    input.setAttribute(
+      'maxlength',
+      '6'
+    );
+
+    input.setAttribute(
+      'minlength',
+      '6'
+    );
+
+    input.setAttribute(
+      'inputmode',
+      'numeric'
+    );
+
+    input.setAttribute(
+      'autocomplete',
+      'one-time-code'
+    );
+
+    input.setAttribute(
+      'pattern',
+      '[0-9]{6}'
+    );
+
+    input.setAttribute(
+      'placeholder',
+      '000000'
+    );
   }
 
-  state.contacts.push(newContact);
-  renderContactsList();
-  closeModal('modal-add-contact');
+  const hint =
+    el('otp-guardian-hint');
 
-  // Reset inputs
-  if (nameInput) nameInput.value = '';
-  if (relInput) relInput.value = '';
-  if (phoneInput) phoneInput.value = '';
-
-  provideFeedback({
-    text: `Contact ${name} added. A demonstration verification OTP ${generatedOtp} has been generated. Tap Verify OTP to complete registration.`,
-    gesture: 'SUCCESS',
-    priority: true
-  });
-
-  // Prompt OTP verification immediately
-  setTimeout(() => {
-    openOtpVerificationModal(newContact.id);
-  }, 1200);
-}
-
-/**
- * Open OTP Verification Modal
- */
-export function openOtpVerificationModal(contactId) {
-  activeVerificationContactId = contactId;
-  const target = state.contacts.find(c => c.id === contactId);
-  if (!target) return;
-
-  const hintEl = document.getElementById('otp-guardian-hint');
-  if (hintEl) {
-    hintEl.textContent = `Enter simulated OTP sent to ${target.phone} (Demo Code: ${target.otpCode || '4829'}).`;
+  if (hint) {
+    hint.textContent =
+      `Enter the six-digit development OTP for ` +
+      `${contact.name} (${contact.phone}). ` +
+      'No real SMS is sent. ' +
+      'Find the generated OTP in your backend terminal.';
   }
 
   openModal('modal-verify-otp');
-  provideFeedback({
-    text: `Verification OTP required for ${target.name}. Demo code is ${target.otpCode || '4829'}.`,
-    priority: true
-  });
+
+  feedback(
+    `Enter the six-digit simulated OTP for ${contact.name}.`,
+    true
+  );
+
+  input?.focus();
 }
 
-/**
- * Verify OTP entered by user
- */
-function handleVerifyContactOtp() {
-  const input = document.getElementById('input-verify-otp');
-  const code = input ? input.value.trim() : '';
+/* ============================================================
+   VERIFY CONTACT OTP
+============================================================ */
 
-  const target = state.contacts.find(c => c.id === activeVerificationContactId);
-  if (!target) {
-    closeModal('modal-verify-otp');
+async function handleVerifyContactOtp() {
+  if (otpBusy) return;
+
+  const contactId =
+    activeVerificationContactId;
+
+  const otp =
+    el('input-verify-otp')?.value.trim() ||
+    '';
+
+  if (!contactId) {
+    feedback(
+      'Select a contact to verify.'
+    );
     return;
   }
 
-  if (code === target.otpCode || code === '4829' || code === '1234') {
-    target.verificationStatus = 'verified';
-    target.notificationStatus = 'delivered';
-    renderContactsList();
+  if (!/^\d{6}$/.test(otp)) {
+    feedback(
+      'Enter a valid six-digit OTP.'
+    );
+    return;
+  }
+
+  const form =
+    el('form-verify-otp');
+
+  const submitButton =
+    form?.querySelector(
+      'button[type="submit"]'
+    );
+
+  otpBusy = true;
+
+  setButtonBusy(
+    submitButton,
+    true,
+    'Verifying...'
+  );
+
+  try {
+    const data =
+      await request(
+        '/contacts/verify',
+        'POST',
+        {
+          contactId,
+          otp
+        }
+      );
+
+    if (
+      data.contact?.verificationStatus !==
+      'verified'
+    ) {
+      throw new Error(
+        'Server did not confirm contact verification.'
+      );
+    }
+
+    const contactName =
+      data.contact.name ||
+      'Guardian';
+
+    // Load the verified state from MongoDB.
+    await loadContacts();
+
+    const verifiedContact =
+      getContact(contactId);
+
+    if (
+      !verifiedContact ||
+      verifiedContact.verificationStatus !==
+      'verified'
+    ) {
+      throw new Error(
+        'Guardian verification could not be confirmed after refresh.'
+      );
+    }
+
     closeModal('modal-verify-otp');
 
-    provideFeedback({
-      text: `OTP verified! Guardian ${target.name} is now verified and active for emergency dispatch.`,
-      gesture: 'SUCCESS',
-      hapticPattern: [100, 50, 100],
-      priority: true
-    });
-  } else {
-    provideFeedback({
-      text: 'Incorrect OTP entered. Please check the code and try again.',
-      gesture: 'ERROR',
-      hapticPattern: [50, 50, 50]
-    });
+    activeVerificationContactId = null;
+
+    const input =
+      el('input-verify-otp');
+
+    if (input) {
+      input.value = '';
+    }
+
+    // Refresh the dashboard onboarding state.
+    emitContactsUpdated();
+
+    feedback(
+      `${contactName} verified successfully in MongoDB. ` +
+      'Emergency notifications remain simulated.',
+      true
+    );
+  } catch (error) {
+    console.error(
+      '[PALMLOCK CONTACTS] OTP verification failed:',
+      error
+    );
+
+    feedback(error.message);
+  } finally {
+    otpBusy = false;
+
+    setButtonBusy(
+      submitButton,
+      false
+    );
   }
 }
 
-/**
- * Set a contact as Primary
- */
-function setPrimaryContact(id) {
-  state.contacts.forEach(c => {
-    c.isPrimary = (c.id === id);
-  });
-  renderContactsList();
+/* ============================================================
+   RESEND SIMULATED OTP
+============================================================ */
 
-  const target = state.contacts.find(c => c.id === id);
-  provideFeedback({
-    text: `${target ? target.name : 'Contact'} designated as Primary Guardian.`,
-    hapticPattern: 50
-  });
-}
+export async function resendContactOtp(
+  contactId
+) {
+  const contact =
+    getContact(contactId);
 
-/**
- * Delete a Contact
- */
-function deleteContact(id) {
-  const target = state.contacts.find(c => c.id === id);
-  state.contacts = state.contacts.filter(c => c.id !== id);
-  // Ensure there is at least one primary if contacts remain
-  if (state.contacts.length > 0 && !state.contacts.some(c => c.isPrimary)) {
-    state.contacts[0].isPrimary = true;
+  if (!contact) {
+    feedback(
+      'Contact not found.'
+    );
+    return false;
   }
-  renderContactsList();
 
-  provideFeedback({
-    text: `Removed ${target ? target.name : 'contact'} from emergency contacts.`,
-    hapticPattern: 80,
-    hapticLabel: 'Contact Removed'
-  });
+  if (
+    contact.verificationStatus === 'verified'
+  ) {
+    feedback(
+      'This guardian is already verified.',
+      true
+    );
+    return false;
+  }
+
+  try {
+    await request(
+      `/contacts/${encodeURIComponent(contactId)}/resend-otp`,
+      'POST',
+      {}
+    );
+
+    feedback(
+      'A new simulated six-digit OTP was generated. ' +
+      'Check the backend terminal. No SMS was sent.',
+      true
+    );
+
+    return true;
+  } catch (error) {
+    feedback(error.message);
+    return false;
+  }
 }
 
-function escapeHTML(str) {
-  return str.replace(/[&<>'"]/g, tag => ({
-    '&': '&amp;',
-    '<': '&lt;',
-    '>': '&gt;',
-    "'": '&#39;',
-    '"': '&quot;'
-  }[tag] || tag));
+/* ============================================================
+   SET PRIMARY GUARDIAN
+============================================================ */
+
+async function setPrimaryContact(
+  contactId
+) {
+  if (mutationBusy) return;
+
+  const contact =
+    getContact(contactId);
+
+  if (!contact) {
+    feedback(
+      'Guardian not found.'
+    );
+    return;
+  }
+
+  if (contact.isPrimary) {
+    feedback(
+      `${contact.name} is already the primary guardian.`,
+      true
+    );
+    return;
+  }
+
+  mutationBusy = true;
+
+  try {
+    await request(
+      `/contacts/${encodeURIComponent(contactId)}`,
+      'PATCH',
+      {
+        isPrimary: true
+      }
+    );
+
+    await loadContacts();
+
+    const updated =
+      getContact(contactId);
+
+    if (!updated?.isPrimary) {
+      throw new Error(
+        'Primary guardian change was not confirmed by the server.'
+      );
+    }
+
+    emitContactsUpdated();
+
+    feedback(
+      `${contact.name} is now your primary guardian.`,
+      true
+    );
+  } catch (error) {
+    console.error(
+      '[PALMLOCK CONTACTS] Primary update failed:',
+      error
+    );
+
+    feedback(error.message);
+  } finally {
+    mutationBusy = false;
+  }
+}
+
+/* ============================================================
+   TOGGLE EMERGENCY NOTIFICATIONS
+============================================================ */
+
+async function toggleContactNotifications(
+  contactId
+) {
+  if (mutationBusy) return;
+
+  const contact =
+    getContact(contactId);
+
+  if (!contact) {
+    feedback(
+      'Guardian not found.'
+    );
+    return;
+  }
+
+  const newValue =
+    !contact.notifyOnDuress;
+
+  mutationBusy = true;
+
+  try {
+    await request(
+      `/contacts/${encodeURIComponent(contactId)}`,
+      'PATCH',
+      {
+        notifyOnDuress: newValue
+      }
+    );
+
+    await loadContacts();
+
+    const updated =
+      getContact(contactId);
+
+    if (
+      !updated ||
+      updated.notifyOnDuress !== newValue
+    ) {
+      throw new Error(
+        'Emergency notification setting was not confirmed by the server.'
+      );
+    }
+
+    emitContactsUpdated();
+
+    feedback(
+      `Emergency notifications for ${contact.name} ` +
+      `${newValue ? 'enabled' : 'disabled'}.`,
+      true
+    );
+  } catch (error) {
+    console.error(
+      '[PALMLOCK CONTACTS] Notification update failed:',
+      error
+    );
+
+    feedback(error.message);
+  } finally {
+    mutationBusy = false;
+  }
+}
+
+/* ============================================================
+   DELETE GUARDIAN
+============================================================ */
+
+async function deleteContact(
+  contactId
+) {
+  if (mutationBusy) return;
+
+  const contact =
+    getContact(contactId);
+
+  if (!contact) {
+    feedback(
+      'Guardian not found.'
+    );
+    return;
+  }
+
+  const confirmed =
+    window.confirm(
+      `Remove ${contact.name} from trusted contacts?`
+    );
+
+  if (!confirmed) return;
+
+  mutationBusy = true;
+
+  try {
+    await request(
+      `/contacts/${encodeURIComponent(contactId)}`,
+      'DELETE'
+    );
+
+    await loadContacts();
+
+    if (getContact(contactId)) {
+      throw new Error(
+        'Guardian deletion was not confirmed by the server.'
+      );
+    }
+
+    emitContactsUpdated();
+
+    feedback(
+      `${contact.name} removed from the server.`,
+      true
+    );
+
+    if (
+      state.contacts.length > 0 &&
+      !state.contacts.some(
+        item => item.isPrimary
+      )
+    ) {
+      feedback(
+        'Please designate another primary guardian.'
+      );
+    }
+
+    if (
+      state.contacts.length === 0
+    ) {
+      feedback(
+        'No trusted guardians remain. ' +
+        'Add and verify a primary guardian.'
+      );
+    }
+  } catch (error) {
+    console.error(
+      '[PALMLOCK CONTACTS] Delete failed:',
+      error
+    );
+
+    feedback(error.message);
+  } finally {
+    mutationBusy = false;
+  }
 }
