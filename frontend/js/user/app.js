@@ -1,18 +1,15 @@
 
 /**
  * PALMLOCK — Touch Beyond Vision
- * Main Application Bootstrap & Controller
+ * Main Application Controller
  *
- * Backend-authenticated registration and login.
- * Security PIN onboarding.
- * MongoDB-backed trusted contact integration.
- * Accessible navigation, gestures, QR scanning,
- * simulated payments, SOS and settings.
+ * Backend authentication, guardian onboarding,
+ * gesture PIN, simulated payments, real GPS,
+ * offline SOS and accessibility.
  *
  * IMPORTANT:
- * All payments and OTP notifications are simulated.
- * Emergency reporting does not guarantee SMS delivery
- * or contact with emergency services.
+ * Payments and guardian notifications are simulated.
+ * PALMLOCK is not an emergency dispatch service.
  */
 
 import { state } from './state.js';
@@ -68,7 +65,11 @@ import {
 } from './contacts.js';
 
 import { initTutorial } from './tutorial.js';
-import { initOfflineQueue } from './offline-queue.js';
+
+import {
+  initOfflineQueue,
+  retryPendingSync
+} from './offline-queue.js';
 
 import {
   captureEmergencyLocation
@@ -76,25 +77,48 @@ import {
 
 import {
   apiReportEmergency,
-  apiReportFalseAlarm
+  apiReportFalseAlarm,
+  apiSetupPin
 } from './api.js';
 
 /* ============================================================
    CONFIGURATION
 ============================================================ */
 
-const API_BASE =
-  window.location.port === '5000'
-    ? '/api'
-    : window.location.protocol.startsWith('http')
-      ? `${window.location.protocol}//${window.location.hostname}:5000/api`
-      : '/api';
+const API_BASE = (() => {
+  const configured = window.PALMLOCK_API_BASE_URL;
+
+  if (
+    typeof configured === 'string' &&
+    configured.trim()
+  ) {
+    return configured.replace(/\/+$/, '');
+  }
+
+  if (window.location.port === '5000') {
+    return '/api';
+  }
+
+  if (
+    window.location.protocol === 'http:' ||
+    window.location.protocol === 'https:'
+  ) {
+    return (
+      `${window.location.protocol}//` +
+      `${window.location.hostname}:5000/api`
+    );
+  }
+
+  return 'http://localhost:5000/api';
+})();
 
 const AUTH_TIMEOUT_MS = 12000;
 
 let authBusy = false;
 let pinSetupBusy = false;
 let guardianContinueBusy = false;
+let sosBusy = false;
+let falseAlarmBusy = false;
 let lastSosIncidentId = null;
 let onboardingRequired = false;
 let contactsReady = false;
@@ -112,11 +136,11 @@ function getValue(id) {
   return getField(id)?.value?.trim() || '';
 }
 
-function showFieldError(id, message) {
+function showFieldError(id, message = '') {
   const element = getField(id);
 
   if (element) {
-    element.textContent = message || '';
+    element.textContent = message;
   }
 }
 
@@ -139,48 +163,64 @@ function announceSuccess(message) {
 }
 
 function getStoredToken() {
+  if (
+    typeof state.authToken === 'string' &&
+    state.authToken.trim()
+  ) {
+    return state.authToken;
+  }
+
   try {
     return (
       sessionStorage.getItem('palmlock_token') ||
       localStorage.getItem('palmlock_token') ||
-      state.authToken ||
+      localStorage.getItem('authToken') ||
       null
     );
   } catch (_) {
-    return state.authToken || null;
+    return null;
   }
 }
 
 function saveSession(token, user) {
-  if (typeof token !== 'string' || !token.trim()) {
+  if (
+    typeof token !== 'string' ||
+    !token.trim()
+  ) {
     throw new Error(
-      'Authentication succeeded without a valid token.'
+      'Authentication server did not return a valid token.'
     );
   }
 
   try {
-    sessionStorage.setItem('palmlock_token', token);
+    sessionStorage.setItem(
+      'palmlock_token',
+      token
+    );
+
     localStorage.removeItem('palmlock_token');
+    localStorage.removeItem('authToken');
   } catch (_) {
-    // The current tab can still use the in-memory token.
+    // In-memory authentication remains available.
   }
 
   state.authToken = token;
 
-  if (!state.auth || typeof state.auth !== 'object') {
+  if (
+    !state.auth ||
+    typeof state.auth !== 'object'
+  ) {
     state.auth = {};
   }
 
   state.auth.token = token;
 
-  if (user && typeof user === 'object') {
-    state.user = {
-      ...user,
-      id: user.id || user._id
-    };
-  }
+  state.user = {
+    ...user,
+    id: user.id || user._id
+  };
 
-  // Never retain another account's guardian data.
+  // Never carry guardians from a previous account.
   state.contacts = [];
   contactsReady = false;
 
@@ -192,38 +232,33 @@ function clearSession() {
   state.user = null;
   state.contacts = [];
   state.currentTransaction = null;
+  state.enteredPin = [];
+
+  if (state.auth) {
+    state.auth.token = null;
+  }
 
   onboardingRequired = false;
   contactsReady = false;
   guardianContinueBusy = false;
   lastSosIncidentId = null;
 
-  if (state.auth && typeof state.auth === 'object') {
-    state.auth.token = null;
-  }
-
   try {
     sessionStorage.removeItem('palmlock_token');
     localStorage.removeItem('palmlock_token');
     localStorage.removeItem('authToken');
-  } catch (_) {
-    // Storage may be unavailable.
-  }
+  } catch (_) {}
 
-  renderContactsSafely();
-  updateGuardianOnboardingUI();
-}
+  const container = getField(
+    'contacts-list-container'
+  );
 
-function renderContactsSafely() {
-  // Contact UI is rendered by contacts.js.
-  // A successful loadContacts() refreshes that UI.
-
-  const container = getField('contacts-list-container');
-
-  if (container && !getStoredToken()) {
+  if (container) {
     container.textContent =
       'Sign in to view your trusted contacts.';
   }
+
+  updateGuardianOnboardingUI();
 }
 
 function extractSession(data) {
@@ -235,7 +270,6 @@ function extractSession(data) {
       payload.accessToken ||
       payload.authToken ||
       data?.token ||
-      data?.accessToken ||
       null,
 
     user:
@@ -250,28 +284,31 @@ function extractSession(data) {
   };
 }
 
-function setBusy(button, busy, busyLabel) {
+function setBusy(button, busy, label) {
   if (!button) return;
 
   if (busy) {
     if (!button.dataset.originalLabel) {
-      button.dataset.originalLabel = button.innerHTML;
+      button.dataset.originalLabel =
+        button.innerHTML;
     }
 
     button.disabled = true;
-    button.textContent = busyLabel;
+    button.textContent = label;
   } else {
     button.disabled = false;
 
     if (button.dataset.originalLabel) {
-      button.innerHTML = button.dataset.originalLabel;
+      button.innerHTML =
+        button.dataset.originalLabel;
+
       delete button.dataset.originalLabel;
     }
   }
 }
 
 /* ============================================================
-   BACKEND REQUESTS
+   AUTHENTICATION REQUESTS
 ============================================================ */
 
 async function authRequest(endpoint, payload) {
@@ -296,7 +333,8 @@ async function authRequest(endpoint, payload) {
     );
 
     const raw = await response.text();
-    let data = {};
+
+    let data;
 
     try {
       data = raw ? JSON.parse(raw) : {};
@@ -305,7 +343,9 @@ async function authRequest(endpoint, payload) {
         ok: false,
         status: response.status,
         data: {
-          error: 'Invalid authentication server response.'
+          success: false,
+          error:
+            'Authentication server returned invalid JSON.'
         }
       };
     }
@@ -320,6 +360,7 @@ async function authRequest(endpoint, payload) {
       ok: false,
       status: 0,
       data: {
+        success: false,
         error:
           error.name === 'AbortError'
             ? 'Authentication request timed out.'
@@ -331,79 +372,8 @@ async function authRequest(endpoint, payload) {
   }
 }
 
-async function authenticatedRequest(endpoint, payload) {
-  const token = getStoredToken();
-
-  if (!token) {
-    throw new Error(
-      'Your session is missing. Please sign in again.'
-    );
-  }
-
-  const controller = new AbortController();
-
-  const timer = setTimeout(
-    () => controller.abort(),
-    AUTH_TIMEOUT_MS
-  );
-
-  try {
-    const response = await fetch(
-      `${API_BASE}${endpoint}`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
-        },
-        body: JSON.stringify(payload),
-        signal: controller.signal
-      }
-    );
-
-    let data;
-
-    try {
-      data = await response.json();
-    } catch (_) {
-      throw new Error(
-        'Invalid response from the security server.'
-      );
-    }
-
-    if (!response.ok || data.success === false) {
-      const error = new Error(
-        data.error ||
-        data.message ||
-        'Security request failed.'
-      );
-
-      error.status = response.status;
-      throw error;
-    }
-
-    return data;
-  } catch (error) {
-    if (error.name === 'AbortError') {
-      throw new Error(
-        'Security request timed out. Check your connection.'
-      );
-    }
-
-    if (error instanceof TypeError) {
-      throw new Error(
-        'Unable to connect to the security server.'
-      );
-    }
-
-    throw error;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
 /* ============================================================
-   TRUSTED CONTACT INTEGRATION
+   TRUSTED CONTACTS
 ============================================================ */
 
 function hasVerifiedPrimaryGuardian() {
@@ -419,8 +389,13 @@ function hasVerifiedPrimaryGuardian() {
 }
 
 function updateGuardianOnboardingUI() {
-  const button = getField('btn-continue-dashboard');
-  const status = getField('guardian-onboarding-status');
+  const button = getField(
+    'btn-continue-dashboard'
+  );
+
+  const status = getField(
+    'guardian-onboarding-status'
+  );
 
   if (!button || !status) return;
 
@@ -428,30 +403,39 @@ function updateGuardianOnboardingUI() {
 
   if (guardianContinueBusy) {
     button.textContent = 'Verifying Guardian...';
+
     status.textContent =
       'Confirming guardian status with the server.';
+
     return;
   }
 
   if (!getStoredToken()) {
     button.textContent = 'Sign In to Continue';
+
     status.textContent =
       'Please sign in to complete guardian setup.';
+
     return;
   }
 
   if (onboardingRequired) {
-    button.textContent = 'Complete Security PIN Setup';
+    button.textContent =
+      'Complete Security PIN Setup';
+
     status.textContent =
-      'Complete your security PIN setup before continuing.';
+      'Complete security PIN setup before continuing.';
+
     return;
   }
 
   if (!contactsReady) {
-    button.textContent = 'Checking Guardian Verification...';
+    button.textContent =
+      'Checking Guardian Verification...';
+
     status.textContent =
-      'Guardian verification has not been confirmed. ' +
-      'Please check your connection.';
+      'Guardian verification has not been confirmed.';
+
     return;
   }
 
@@ -470,16 +454,17 @@ function updateGuardianOnboardingUI() {
   button.textContent = 'Continue to Dashboard';
 
   status.textContent =
-    'Your primary guardian is verified and emergency ' +
-    'notifications are enabled. You can now continue.';
+    'Primary guardian verified. ' +
+    'You can continue to your dashboard.';
 }
 
-async function refreshTrustedContacts(options = {}) {
-  const { silent = false } = options;
-
+async function refreshTrustedContacts({
+  silent = false
+} = {}) {
   if (!getStoredToken()) {
-    contactsReady = false;
     state.contacts = [];
+    contactsReady = false;
+
     updateGuardianOnboardingUI();
     return false;
   }
@@ -490,9 +475,6 @@ async function refreshTrustedContacts(options = {}) {
   try {
     const result = await loadContacts();
 
-    // The expected contacts.js contract returns an array.
-    // Some implementations instead update state.contacts
-    // and return the API response object.
     const contacts =
       Array.isArray(result)
         ? result
@@ -514,22 +496,22 @@ async function refreshTrustedContacts(options = {}) {
     contactsReady = true;
 
     updateGuardianOnboardingUI();
+
     return true;
   } catch (error) {
-    contactsReady = false;
     state.contacts = [];
+    contactsReady = false;
 
     updateGuardianOnboardingUI();
 
     console.warn(
-      '[PALMLOCK CONTACTS] Load failed:',
-      error.message
+      '[PALMLOCK CONTACTS]',
+      error
     );
 
     if (!silent) {
       announceError(
-        'Unable to load trusted contacts. ' +
-        'Please check your connection and retry.'
+        'Unable to load trusted contacts. Please retry.'
       );
     }
 
@@ -540,7 +522,7 @@ async function refreshTrustedContacts(options = {}) {
 async function openContactsScreen() {
   if (!getStoredToken()) {
     announceError(
-      'Please sign in to manage contacts.'
+      'Please sign in to manage guardians.'
     );
 
     navigateTo('screen-welcome');
@@ -556,14 +538,15 @@ async function openContactsScreen() {
 
 function canAccessProtectedScreens() {
   if (!getStoredToken()) {
-    announceError('Please sign in to continue.');
+    announceError('Please sign in first.');
+
     navigateTo('screen-welcome');
     return false;
   }
 
   if (onboardingRequired) {
     announceError(
-      'Complete your security PIN setup first.'
+      'Complete security PIN setup first.'
     );
 
     openPinSetup();
@@ -574,7 +557,9 @@ function canAccessProtectedScreens() {
 }
 
 function navigateProtected(target) {
-  if (!canAccessProtectedScreens()) return;
+  if (!canAccessProtectedScreens()) {
+    return;
+  }
 
   if (target === 'screen-contacts') {
     void openContactsScreen();
@@ -583,7 +568,16 @@ function navigateProtected(target) {
 
   if (target === 'screen-scanner') {
     navigateTo(target);
-    startCamera();
+
+    Promise.resolve(startCamera()).catch(
+      error => {
+        console.warn(
+          '[PALMLOCK CAMERA]',
+          error
+        );
+      }
+    );
+
     return;
   }
 
@@ -592,7 +586,7 @@ function navigateProtected(target) {
 }
 
 /* ============================================================
-   ONBOARDING HELPERS
+   PIN SETUP HELPERS
 ============================================================ */
 
 function clearPinSetupFields() {
@@ -600,7 +594,8 @@ function clearPinSetupFields() {
     'setup-standard-pin',
     'setup-standard-confirm',
     'setup-duress-pin',
-    'setup-duress-confirm'
+    'setup-duress-confirm',
+    'setup-current-password'
   ].forEach(id => {
     const field = getField(id);
 
@@ -628,7 +623,7 @@ function validatePinSetup() {
     !/^\d{4}$/.test(duressPin)
   ) {
     throw new Error(
-      'Both security PINs must contain exactly four digits.'
+      'Both PINs must contain exactly four digits.'
     );
   }
 
@@ -656,14 +651,90 @@ function validatePinSetup() {
   };
 }
 
+/**
+ * Add a password field to the existing PIN form.
+ *
+ * It is optional for first-time PIN setup,
+ * but required by the backend when changing PINs.
+ */
+function ensurePinPasswordField() {
+  const form = getField('form-pin-setup');
+
+  if (!form) return null;
+
+  let input = getField(
+    'setup-current-password'
+  );
+
+  if (input) return input;
+
+  const wrapper = document.createElement('div');
+
+  wrapper.id =
+    'setup-current-password-wrapper';
+
+  wrapper.className = 'form-group';
+
+  const label = document.createElement('label');
+
+  label.className = 'form-label';
+  label.htmlFor = 'setup-current-password';
+
+  label.textContent =
+    'Current account password (required when changing existing PINs)';
+
+  input = document.createElement('input');
+
+  input.id = 'setup-current-password';
+  input.name = 'currentPassword';
+  input.className = 'form-input';
+  input.type = 'password';
+  input.autocomplete = 'current-password';
+
+  input.setAttribute(
+    'aria-describedby',
+    'setup-current-password-help'
+  );
+
+  const help = document.createElement('p');
+
+  help.id = 'setup-current-password-help';
+  help.className = 'form-help';
+
+  help.textContent =
+    'Leave blank for first-time setup. ' +
+    'Enter your login password when updating existing PINs.';
+
+  wrapper.append(
+    label,
+    input,
+    help
+  );
+
+  const submitButton = getField(
+    'btn-submit-pin-setup'
+  );
+
+  if (submitButton) {
+    submitButton.before(wrapper);
+  } else {
+    form.appendChild(wrapper);
+  }
+
+  return input;
+}
+
 function openPinSetup() {
+  ensurePinPasswordField();
   clearPinSetupFields();
+
   showFieldError('pin-setup-error', '');
+
   navigateTo('screen-pin-setup');
 }
 
 /* ============================================================
-   BOOTSTRAP
+   APPLICATION BOOTSTRAP
 ============================================================ */
 
 document.addEventListener(
@@ -673,7 +744,22 @@ document.addEventListener(
 
     initialized = true;
 
-    initOfflineQueue();
+    ensurePinPasswordField();
+
+    try {
+      await initOfflineQueue();
+    } catch (error) {
+      console.error(
+        '[PALMLOCK OFFLINE STORAGE]',
+        error
+      );
+
+      announceError(
+        'Offline emergency storage is unavailable. ' +
+        'Do not rely on offline emergency delivery.'
+      );
+    }
+
     initTopAccessibilityBar();
     initDesktopPreviewBar();
     initNavigation();
@@ -683,6 +769,7 @@ document.addEventListener(
     initPaymentActions();
     initPracticeLab();
     initSettingsControls();
+
     initContacts();
     initTutorial();
     initGlobalKeyboardShortcuts();
@@ -694,24 +781,26 @@ document.addEventListener(
     updateGuardianOnboardingUI();
 
     if (!getStoredToken()) {
-      navigateTo('screen-welcome', false);
+      navigateTo(
+        'screen-welcome',
+        false
+      );
     } else {
-      // Check saved-session contacts with the server.
-      // A saved token alone does not prove that
-      // guardian verification is still valid.
+      navigateTo(
+        'screen-contacts',
+        false
+      );
 
-      navigateTo('screen-contacts', false);
-
-      const loaded = await refreshTrustedContacts({
-        silent: true
-      });
+      const loaded =
+        await refreshTrustedContacts({
+          silent: true
+        });
 
       if (!loaded) {
         provideFeedback({
           text:
-            'Your saved session could not load trusted ' +
-            'contacts. Please sign in again if the ' +
-            'problem continues.',
+            'Saved session found, but guardian verification ' +
+            'could not be loaded.',
           priority: true
         });
       }
@@ -724,193 +813,353 @@ document.addEventListener(
 );
 
 /* ============================================================
-   ACCESSIBILITY BAR AND SOS
+   SOS EMERGENCY HANDLING
 ============================================================ */
 
-function initTopAccessibilityBar() {
-  const speechToggle = getField('btn-toggle-speech');
+function formatEmergencyCoordinates(location) {
+  if (
+    location?.isRealGPS !== true ||
+    !Number.isFinite(location.lat) ||
+    !Number.isFinite(location.lng)
+  ) {
+    return 'Location unavailable';
+  }
 
-  speechToggle?.addEventListener('click', () => {
-    state.preferences.speechEnabled =
-      !state.preferences.speechEnabled;
+  return (
+    `${location.lat.toFixed(6)}, ` +
+    `${location.lng.toFixed(6)}` +
+    (
+      Number.isFinite(location.accuracyMeters)
+        ? ` (±${location.accuracyMeters}m)`
+        : ''
+    )
+  );
+}
 
-    const enabled = state.preferences.speechEnabled;
+function buildEmergencyLocation(location) {
+  if (
+    location?.isRealGPS !== true ||
+    !Number.isFinite(location.lat) ||
+    !Number.isFinite(location.lng)
+  ) {
+    return null;
+  }
 
-    speechToggle.setAttribute(
-      'aria-pressed',
-      String(enabled)
+  return {
+    lat: location.lat,
+    lng: location.lng,
+    accuracyMeters:
+      location.accuracyMeters ?? null,
+    source: 'device',
+    simulated: false,
+    capturedAt:
+      location.capturedAt || null
+  };
+}
+
+async function handleSOS() {
+  if (sosBusy) return;
+
+  if (!getStoredToken()) {
+    announceError(
+      'Sign in before using emergency reporting.'
     );
 
-    speechToggle.title =
-      `Audio Announcements: ${enabled ? 'On' : 'Off'}`;
+    return;
+  }
 
-    if (!enabled) {
-      stopSpeech();
-    }
+  sosBusy = true;
+  lastSosIncidentId = null;
 
-    provideFeedback({
-      text:
-        `Audio announcements ${enabled ? 'enabled' : 'disabled'}`,
-      hapticPattern: 50
-    });
-  });
+  const button = getField('btn-trigger-sos');
 
-  getField('btn-cycle-theme')
-    ?.addEventListener('click', cycleTheme);
+  setBusy(
+    button,
+    true,
+    'Recording SOS...'
+  );
 
-  getField('btn-cycle-font')
-    ?.addEventListener('click', cycleFontSize);
+  openModal('modal-sos-alert');
 
-  const sosBtn = getField('btn-trigger-sos');
+  const recipientsEl =
+    getField('sos-modal-recipients');
 
-  sosBtn?.addEventListener('click', async () => {
-    if (!getStoredToken()) {
-      announceError(
-        'Sign in before using PALMLOCK emergency reporting.'
-      );
-      return;
-    }
+  const coordsEl =
+    getField('sos-modal-coords');
 
-    // The modal is opened immediately, but the backend
-    // incident must still be confirmed separately.
-    openModal('modal-sos-alert');
+  if (recipientsEl) {
+    recipientsEl.textContent =
+      'Saving emergency incident...';
+  }
 
-    const recipientsEl =
-      getField('sos-modal-recipients');
+  if (coordsEl) {
+    coordsEl.textContent =
+      'Obtaining device location...';
+  }
 
-    if (recipientsEl) {
-      recipientsEl.textContent =
-        'Checking configured guardians...';
-    }
-
+  try {
     let location = null;
 
     try {
-      location = await captureEmergencyLocation();
+      location =
+        await captureEmergencyLocation();
     } catch (error) {
       console.warn(
-        '[PALMLOCK SOS] Location unavailable.',
+        '[PALMLOCK SOS GPS]',
         error
       );
     }
 
-    const coordsEl = getField('sos-modal-coords');
-
     if (coordsEl) {
       coordsEl.textContent =
-        location?.coords
-          ? typeof location.coords === 'string'
-            ? location.coords
-            : JSON.stringify(location.coords)
-          : 'Location unavailable';
+        formatEmergencyCoordinates(location);
     }
 
-    let result;
+    const emergencyLocation =
+      buildEmergencyLocation(location);
 
-    try {
-      result = await apiReportEmergency({
+    const result =
+      await apiReportEmergency({
         type: 'SOS',
-        userId: state.user?.id,
-        userName: state.user?.name,
-        userPhone: state.user?.phone,
-        location: location?.coords || null,
-        lat: location?.lat ?? null,
-        lng: location?.lng ?? null,
-        accuracyMeters:
-          location?.accuracyMeters ?? null
-      });
-    } catch (error) {
-      console.error('[PALMLOCK SOS]', error);
 
+        userId:
+          state.user?.id ||
+          state.user?._id ||
+          null,
+
+        userName:
+          state.user?.name ||
+          'Unknown User',
+
+        userPhone:
+          state.user?.phone ||
+          '',
+
+        location: emergencyLocation
+      });
+
+    /*
+     * False alarm must use a backend incident ID,
+     * not the local IndexedDB queue ID.
+     */
+    if (result?.backendAccepted === true) {
+      lastSosIncidentId =
+        result.incident?.incidentId ||
+        result.incident?.backendIncidentId ||
+        null;
+    }
+
+    if (result?.backendAccepted === true) {
       if (recipientsEl) {
         recipientsEl.textContent =
-          'Notification not confirmed';
+          'Incident accepted by PALMLOCK server. ' +
+          'Guardian notification not confirmed.';
+      }
+
+      provideFeedback({
+        text:
+          'SOS incident recorded on the PALMLOCK server. ' +
+          'Guardian notification is simulated and not confirmed.',
+        hapticPattern:
+          [300, 100, 300, 100, 300],
+        priority: true
+      });
+    } else if (result?.queued === true) {
+      if (recipientsEl) {
+        recipientsEl.textContent =
+          'SOS saved locally. Server delivery pending.';
+      }
+
+      provideFeedback({
+        text:
+          'SOS saved on this device. ' +
+          'The server has not confirmed receiving it. ' +
+          'Use another emergency contact method if help is needed.',
+        hapticPattern:
+          [300, 100, 300],
+        priority: true
+      });
+    } else {
+      if (recipientsEl) {
+        recipientsEl.textContent =
+          'Emergency recording not confirmed.';
       }
 
       announceError(
-        'Emergency report failed. ' +
-        'Please use another emergency contact method.'
+        'SOS could not be saved or delivered. ' +
+        'Use another emergency contact method.'
       );
-      return;
     }
-
-    lastSosIncidentId =
-      result?.incident?.incidentId ||
-      result?.incident?.id ||
-      result?.incident?._id ||
-      null;
+  } catch (error) {
+    console.error(
+      '[PALMLOCK SOS]',
+      error
+    );
 
     if (recipientsEl) {
       recipientsEl.textContent =
-        result?.delivered
-          ? 'Server incident accepted; guardian notification unconfirmed'
-          : result?.queued
-            ? 'Alert queued locally; notification pending'
-            : 'No guardian notification confirmed';
+        'Emergency recording failed.';
     }
 
-    const message = result?.delivered
-      ? 'SOS incident accepted by the PALMLOCK server. ' +
-        'Guardian delivery is not yet confirmed.'
-      : result?.queued
-        ? 'SOS saved locally. Server delivery is pending.'
-        : 'SOS could not be confirmed or saved. ' +
-          'Please use another emergency contact method.';
+    announceError(
+      'Unable to record SOS. ' +
+      'Use another emergency contact method.'
+    );
+  } finally {
+    sosBusy = false;
 
-    provideFeedback({
-      text: message,
-      gesture: 'ERROR',
-      hapticPattern: [300, 100, 300, 100, 300],
-      priority: true
-    });
-  });
+    setBusy(
+      button,
+      false
+    );
+  }
+}
+
+async function handleFalseAlarm() {
+  if (falseAlarmBusy) return;
+
+  if (!lastSosIncidentId) {
+    announceError(
+      'No server-confirmed SOS incident is available ' +
+      'for false-alarm reporting.'
+    );
+
+    return;
+  }
+
+  falseAlarmBusy = true;
+
+  const button = getField(
+    'btn-report-false-alarm'
+  );
+
+  setBusy(
+    button,
+    true,
+    'Reporting...'
+  );
+
+  try {
+    const result =
+      await apiReportFalseAlarm(
+        lastSosIncidentId,
+        'User reported accidental SOS trigger.'
+      );
+
+    if (result.backendConfirmed) {
+      closeModal('modal-sos-alert');
+
+      lastSosIncidentId = null;
+
+      announceSuccess(
+        'False alarm report confirmed by the server.'
+      );
+    } else {
+      announceError(
+        'False alarm was not confirmed by the server. ' +
+        'Please retry.'
+      );
+    }
+  } catch (error) {
+    console.error(
+      '[PALMLOCK FALSE ALARM]',
+      error
+    );
+
+    announceError(
+      'Unable to confirm the false alarm.'
+    );
+  } finally {
+    falseAlarmBusy = false;
+
+    setBusy(
+      button,
+      false
+    );
+  }
+}
+
+/* ============================================================
+   ACCESSIBILITY BAR
+============================================================ */
+
+function initTopAccessibilityBar() {
+  const speechToggle = getField(
+    'btn-toggle-speech'
+  );
+
+  speechToggle?.addEventListener(
+    'click',
+    () => {
+      state.preferences.speechEnabled =
+        !state.preferences.speechEnabled;
+
+      const enabled =
+        state.preferences.speechEnabled;
+
+      speechToggle.setAttribute(
+        'aria-pressed',
+        String(enabled)
+      );
+
+      speechToggle.title =
+        `Audio Announcements: ${enabled ? 'On' : 'Off'}`;
+
+      if (!enabled) {
+        stopSpeech();
+      }
+
+      provideFeedback({
+        text:
+          `Audio announcements ${enabled ? 'enabled' : 'disabled'}`,
+        hapticPattern: 50
+      });
+    }
+  );
+
+  getField('btn-cycle-theme')
+    ?.addEventListener(
+      'click',
+      cycleTheme
+    );
+
+  getField('btn-cycle-font')
+    ?.addEventListener(
+      'click',
+      cycleFontSize
+    );
+
+  getField('btn-trigger-sos')
+    ?.addEventListener(
+      'click',
+      handleSOS
+    );
 
   getField('btn-report-false-alarm')
-    ?.addEventListener('click', async () => {
-      if (!lastSosIncidentId) {
-        announceError(
-          'No confirmed SOS incident identifier is available.'
-        );
-        return;
-      }
-
-      try {
-        const result = await apiReportFalseAlarm(
-          lastSosIncidentId,
-          'User reported accidental SOS trigger.'
-        );
-
-        if (result.backendConfirmed) {
-          closeModal('modal-sos-alert');
-
-          announceSuccess(
-            'False alarm report confirmed by the server.'
-          );
-        } else {
-          provideFeedback({
-            text:
-              'False alarm recorded locally. ' +
-              'Server confirmation is pending.',
-            priority: true
-          });
-        }
-      } catch (error) {
-        announceError(
-          'Unable to confirm false alarm with the server.'
-        );
-      }
-    });
+    ?.addEventListener(
+      'click',
+      handleFalseAlarm
+    );
 
   getField('btn-close-sos-modal')
-    ?.addEventListener('click', () => {
-      closeModal('modal-sos-alert');
-    });
+    ?.addEventListener(
+      'click',
+      () => {
+        closeModal('modal-sos-alert');
+      }
+    );
 
   getField('brand-home-link')
-    ?.addEventListener('click', event => {
-      event.preventDefault();
-      navigateProtected('screen-dashboard');
-    });
+    ?.addEventListener(
+      'click',
+      event => {
+        event.preventDefault();
+
+        navigateProtected(
+          'screen-dashboard'
+        );
+      }
+    );
 }
 
 /* ============================================================
@@ -919,33 +1168,41 @@ function initTopAccessibilityBar() {
 
 function initDesktopPreviewBar() {
   getField('screen-fast-nav')
-    ?.addEventListener('change', event => {
-      navigateProtected(event.target.value);
-    });
+    ?.addEventListener(
+      'change',
+      event => {
+        navigateProtected(
+          event.target.value
+        );
+      }
+    );
 
   getField('btn-toggle-fullscreen')
-    ?.addEventListener('click', event => {
-      document.body.classList.toggle(
-        'fullscreen-mode'
-      );
-
-      const enabled =
-        document.body.classList.contains(
+    ?.addEventListener(
+      'click',
+      event => {
+        document.body.classList.toggle(
           'fullscreen-mode'
         );
 
-      event.currentTarget.textContent =
-        enabled
-          ? 'Mobile Frame'
-          : 'Toggle Frame';
+        const enabled =
+          document.body.classList.contains(
+            'fullscreen-mode'
+          );
 
-      provideFeedback({
-        text: enabled
-          ? 'Switched to fullscreen responsive mode.'
-          : 'Switched to simulated phone frame.',
-        hapticPattern: 40
-      });
-    });
+        event.currentTarget.textContent =
+          enabled
+            ? 'Mobile Frame'
+            : 'Toggle Frame';
+
+        provideFeedback({
+          text: enabled
+            ? 'Fullscreen mode activated.'
+            : 'Phone frame mode activated.',
+          hapticPattern: 40
+        });
+      }
+    );
 }
 
 /* ============================================================
@@ -956,168 +1213,190 @@ function initNavigation() {
   document.querySelectorAll(
     '.bottom-nav .nav-item'
   ).forEach(item => {
-    item.addEventListener('click', () => {
-      const target = item.getAttribute('data-nav');
+    item.addEventListener(
+      'click',
+      () => {
+        const target =
+          item.getAttribute('data-nav');
 
-      if (target) {
-        navigateProtected(target);
+        if (target) {
+          navigateProtected(target);
+        }
       }
-    });
+    );
   });
 
   document.querySelectorAll(
     '[data-back], .btn-header-back'
   ).forEach(button => {
-    button.addEventListener('click', () => {
-      stopCamera();
+    button.addEventListener(
+      'click',
+      () => {
+        stopCamera();
 
-      const target =
-        button.getAttribute('data-back');
+        const target =
+          button.getAttribute('data-back');
 
-      if (target) {
-        if (
-          target === 'screen-welcome' ||
-          target === 'screen-login' ||
-          target === 'screen-register'
+        if (target) {
+          if (
+            [
+              'screen-welcome',
+              'screen-login',
+              'screen-register'
+            ].includes(target)
+          ) {
+            navigateTo(target);
+          } else {
+            navigateProtected(target);
+          }
+        } else if (
+          canAccessProtectedScreens()
         ) {
-          navigateTo(target);
-        } else {
-          navigateProtected(target);
+          navigateBack();
         }
-      } else if (canAccessProtectedScreens()) {
-        navigateBack();
       }
-    });
+    );
   });
 
   getField('dash-btn-scan')
-    ?.addEventListener('click', () => {
-      navigateProtected('screen-scanner');
-    });
+    ?.addEventListener(
+      'click',
+      () => {
+        navigateProtected(
+          'screen-scanner'
+        );
+      }
+    );
 
   getField('dash-btn-stealth')
-    ?.addEventListener('click', () => {
-      if (!canAccessProtectedScreens()) return;
+    ?.addEventListener(
+      'click',
+      () => {
+        if (!canAccessProtectedScreens()) {
+          return;
+        }
 
-      navigateTo('screen-stealth');
+        navigateTo('screen-stealth');
 
-      provideFeedback({
-        text:
-          'Black Stealth Mode activated. Display is dark.',
-        priority: true
-      });
-    });
+        provideFeedback({
+          text:
+            'Black Stealth Mode activated.',
+          priority: true
+        });
+      }
+    );
 
   getField('dash-btn-practice')
-    ?.addEventListener('click', () => {
-      navigateProtected('screen-practice');
-    });
+    ?.addEventListener(
+      'click',
+      () => {
+        navigateProtected(
+          'screen-practice'
+        );
+      }
+    );
 
   getField('dash-btn-tutorial')
-    ?.addEventListener('click', () => {
-      navigateProtected('screen-tutorial');
-    });
+    ?.addEventListener(
+      'click',
+      () => {
+        navigateProtected(
+          'screen-tutorial'
+        );
+      }
+    );
 
   getField('btn-see-all-history')
-    ?.addEventListener('click', () => {
-      navigateProtected('screen-history');
-    });
+    ?.addEventListener(
+      'click',
+      () => {
+        navigateProtected(
+          'screen-history'
+        );
+      }
+    );
 }
 
 /* ============================================================
-   LOGIN, REGISTRATION AND ONBOARDING
+   LOGIN, REGISTRATION, ONBOARDING
 ============================================================ */
 
 function initFormInteractions() {
-  // Each form is declared exactly once.
-  const formLogin = getField('form-login');
-  const formRegister = getField('form-register');
-  const formPinSetup = getField('form-pin-setup');
+  const formLogin =
+    getField('form-login');
+
+  const formRegister =
+    getField('form-register');
+
+  const formPinSetup =
+    getField('form-pin-setup');
 
   /* ---------------- GUARDIAN CONTINUE ---------------- */
 
   getField('btn-continue-dashboard')
-    ?.addEventListener('click', async () => {
-      if (guardianContinueBusy) return;
-
-      const button =
-        getField('btn-continue-dashboard');
-
-      if (!getStoredToken()) {
-        announceError('Please sign in again.');
-        navigateTo('screen-welcome');
-        return;
-      }
-
-      if (onboardingRequired) {
-        announceError(
-          'Complete your security PIN setup first.'
-        );
-
-        openPinSetup();
-        return;
-      }
-
-      guardianContinueBusy = true;
-      updateGuardianOnboardingUI();
-
-      try {
-        const loaded =
-          await refreshTrustedContacts({
-            silent: true
-          });
-
-        if (!loaded) {
-          announceError(
-            'Unable to verify guardian status with the server. ' +
-            'Please check your connection.'
-          );
+    ?.addEventListener(
+      'click',
+      async () => {
+        if (guardianContinueBusy) {
           return;
         }
 
-        if (!hasVerifiedPrimaryGuardian()) {
+        if (!getStoredToken()) {
           announceError(
-            'Verify a primary guardian and enable ' +
-            'emergency notifications before continuing.'
+            'Please sign in again.'
           );
+
+          navigateTo('screen-welcome');
           return;
         }
 
-        announceSuccess(
-          'Guardian verified. Opening your PALMLOCK dashboard.'
-        );
+        if (onboardingRequired) {
+          openPinSetup();
+          return;
+        }
 
-        navigateTo('screen-dashboard');
-      } catch (error) {
-        console.error(
-          '[PALMLOCK ONBOARDING]',
-          error
-        );
+        guardianContinueBusy = true;
 
-        announceError(
-          'Unable to complete onboarding. Please retry.'
-        );
-      } finally {
-        guardianContinueBusy = false;
         updateGuardianOnboardingUI();
-      }
-    });
 
-  /*
-   * contacts.js should dispatch this event after
-   * successfully refreshing MongoDB-backed contacts.
-   *
-   * Example:
-   * document.dispatchEvent(
-   *   new CustomEvent('palmlock:contacts-updated')
-   * );
-   */
+        try {
+          const loaded =
+            await refreshTrustedContacts({
+              silent: true
+            });
+
+          if (!loaded) {
+            announceError(
+              'Unable to verify guardians with the server.'
+            );
+
+            return;
+          }
+
+          if (!hasVerifiedPrimaryGuardian()) {
+            announceError(
+              'Verify a primary guardian and enable emergency notifications.'
+            );
+
+            return;
+          }
+
+          announceSuccess(
+            'Guardian verified. Opening dashboard.'
+          );
+
+          navigateTo('screen-dashboard');
+        } finally {
+          guardianContinueBusy = false;
+
+          updateGuardianOnboardingUI();
+        }
+      }
+    );
 
   document.addEventListener(
     'palmlock:contacts-updated',
     () => {
-      // The event is a UI refresh signal, not proof
-      // that the server has verified the guardian.
       void refreshTrustedContacts({
         silent: true
       });
@@ -1127,37 +1406,48 @@ function initFormInteractions() {
   /* ---------------- DEMO LOGIN FILL ---------------- */
 
   getField('btn-fill-demo-login')
-    ?.addEventListener('click', () => {
-      const email = getField('login-email');
+    ?.addEventListener(
+      'click',
+      () => {
+        const email =
+          getField('login-email');
 
-      if (email) {
-        email.value =
-          state.user?.email || '';
+        if (email) {
+          email.value =
+            state.user?.email || '';
+        }
+
+        provideFeedback({
+          text:
+            'Enter the password for your registered account.',
+          hapticPattern: 40
+        });
       }
-
-      provideFeedback({
-        text:
-          'Enter the password for your registered account. ' +
-          'Backend authentication is required.',
-        hapticPattern: 40
-      });
-    });
+    );
 
   getField('audio-btn-welcome')
-    ?.addEventListener('click', () => {
-      provideFeedback({
-        text:
-          'Welcome to PALMLOCK. Touch Beyond Vision. ' +
-          'An accessible simulated payment system with ' +
-          'directional gestures, audio and tactile feedback.',
-        priority: true
-      });
-    });
+    ?.addEventListener(
+      'click',
+      () => {
+        provideFeedback({
+          text:
+            'Welcome to PALMLOCK. Touch Beyond Vision. ' +
+            'An accessible simulated payment system ' +
+            'with gesture security and emergency assistance.',
+          priority: true
+        });
+      }
+    );
 
   getField('btn-goto-register')
-    ?.addEventListener('click', () => {
-      navigateTo('screen-register');
-    });
+    ?.addEventListener(
+      'click',
+      () => {
+        navigateTo(
+          'screen-register'
+        );
+      }
+    );
 
   /* ---------------- LOGIN ---------------- */
 
@@ -1168,26 +1458,26 @@ function initFormInteractions() {
 
       if (authBusy) return;
 
-      const email = getValue('login-email');
+      const email =
+        getValue('login-email');
 
       const password =
-        getField('login-password')?.value || '';
+        getField('login-password')?.value ||
+        '';
 
       showFieldError(
-        'login-email-error',
-        ''
+        'login-email-error'
       );
 
       showFieldError(
-        'login-password-error',
-        ''
+        'login-password-error'
       );
 
       if (!email || !password) {
         if (!email) {
           showFieldError(
             'login-email-error',
-            'Please enter your email address.'
+            'Please enter your email.'
           );
         }
 
@@ -1199,8 +1489,9 @@ function initFormInteractions() {
         }
 
         announceError(
-          'Please complete the login fields.'
+          'Complete all login fields.'
         );
+
         return;
       }
 
@@ -1220,13 +1511,14 @@ function initFormInteractions() {
       let authenticated = false;
 
       try {
-        const result = await authRequest(
-          '/auth/login',
-          {
-            email,
-            password
-          }
-        );
+        const result =
+          await authRequest(
+            '/auth/login',
+            {
+              email,
+              password
+            }
+          );
 
         if (
           !result.ok ||
@@ -1242,9 +1534,12 @@ function initFormInteractions() {
         const session =
           extractSession(result.data);
 
-        if (!session.token || !session.user) {
+        if (
+          !session.token ||
+          !session.user
+        ) {
           throw new Error(
-            'The server did not return a complete login session.'
+            'Server returned an incomplete session.'
           );
         }
 
@@ -1256,16 +1551,13 @@ function initFormInteractions() {
         authenticated = true;
 
         onboardingRequired =
-          Boolean(session.onboardingRequired);
+          Boolean(
+            session.onboardingRequired
+          );
+
+        getField('login-password').value = '';
 
         updateGuardianOnboardingUI();
-
-        const passwordField =
-          getField('login-password');
-
-        if (passwordField) {
-          passwordField.value = '';
-        }
 
         await refreshTrustedContacts({
           silent: true
@@ -1273,27 +1565,19 @@ function initFormInteractions() {
 
         if (onboardingRequired) {
           announceSuccess(
-            'Welcome back. Complete your security PIN setup.'
+            'Signed in. Complete your PIN setup.'
           );
 
           openPinSetup();
           return;
         }
 
-        if (!contactsReady) {
+        if (
+          !contactsReady ||
+          !hasVerifiedPrimaryGuardian()
+        ) {
           announceSuccess(
-            'Signed in successfully. Trusted contacts ' +
-            'could not be loaded. Please check your connection.'
-          );
-
-          navigateTo('screen-contacts');
-          return;
-        }
-
-        if (!hasVerifiedPrimaryGuardian()) {
-          announceSuccess(
-            'Welcome back. Please verify a primary ' +
-            'guardian with emergency alerts enabled.'
+            'Signed in. Please verify your primary guardian.'
           );
 
           navigateTo('screen-contacts');
@@ -1301,11 +1585,21 @@ function initFormInteractions() {
         }
 
         announceSuccess(
-          `Welcome back, ${state.user?.name || 'User'}. ` +
-          'Opening your dashboard.'
+          `Welcome back, ${state.user?.name || 'User'}.`
         );
 
         navigateTo('screen-dashboard');
+
+        // Retry previous emergencies only after
+        // the user has authenticated.
+        void retryPendingSync().catch(
+          error => {
+            console.warn(
+              '[PALMLOCK SYNC]',
+              error
+            );
+          }
+        );
       } catch (error) {
         if (!authenticated) {
           clearSession();
@@ -1316,7 +1610,9 @@ function initFormInteractions() {
           error.message
         );
 
-        announceError(error.message);
+        announceError(
+          error.message
+        );
       } finally {
         authBusy = false;
 
@@ -1347,7 +1643,8 @@ function initFormInteractions() {
         getValue('reg-email');
 
       const password =
-        getField('reg-password')?.value || '';
+        getField('reg-password')?.value ||
+        '';
 
       const vision =
         getValue('reg-vision-level');
@@ -1359,10 +1656,10 @@ function initFormInteractions() {
         password.length < 6
       ) {
         announceError(
-          'Please enter your name, phone number, ' +
-          'email address and a password of at least ' +
-          'six characters.'
+          'Enter your name, phone number, email ' +
+          'and a password of at least six characters.'
         );
+
         return;
       }
 
@@ -1380,16 +1677,17 @@ function initFormInteractions() {
       );
 
       try {
-        const result = await authRequest(
-          '/auth/register',
-          {
-            name,
-            email,
-            phone,
-            password,
-            visionLevel: vision
-          }
-        );
+        const result =
+          await authRequest(
+            '/auth/register',
+            {
+              name,
+              phone,
+              email,
+              password,
+              visionLevel: vision
+            }
+          );
 
         if (
           !result.ok ||
@@ -1412,7 +1710,10 @@ function initFormInteractions() {
           passwordField.value = '';
         }
 
-        if (session.token && session.user) {
+        if (
+          session.token &&
+          session.user
+        ) {
           saveSession(
             session.token,
             session.user
@@ -1430,7 +1731,7 @@ function initFormInteractions() {
 
           announceSuccess(
             `Account created for ${name}. ` +
-            'Configure your accessibility preferences.'
+            'Configure accessibility settings.'
           );
         } else {
           clearSession();
@@ -1438,11 +1739,13 @@ function initFormInteractions() {
           navigateTo('screen-welcome');
 
           announceSuccess(
-            'Registration completed. Please sign in to continue.'
+            'Registration completed. Please sign in.'
           );
         }
       } catch (error) {
-        announceError(error.message);
+        announceError(
+          error.message
+        );
       } finally {
         authBusy = false;
 
@@ -1457,46 +1760,51 @@ function initFormInteractions() {
   /* ---------------- ACCESSIBILITY SETUP ---------------- */
 
   getField('btn-save-setup')
-    ?.addEventListener('click', () => {
-      if (!getStoredToken()) {
-        announceError(
-          'Please sign in before configuring security.'
+    ?.addEventListener(
+      'click',
+      () => {
+        if (!getStoredToken()) {
+          announceError(
+            'Please sign in first.'
+          );
+
+          navigateTo('screen-welcome');
+          return;
+        }
+
+        const audioToggle =
+          getField('setup-audio-toggle');
+
+        const hapticToggle =
+          getField('setup-haptic-toggle');
+
+        const themeSelect =
+          getField('setup-theme-select');
+
+        if (audioToggle) {
+          state.preferences.speechEnabled =
+            audioToggle.checked;
+        }
+
+        if (hapticToggle) {
+          state.preferences.hapticEnabled =
+            hapticToggle.checked;
+        }
+
+        if (themeSelect?.value) {
+          setTheme(
+            themeSelect.value
+          );
+        }
+
+        announceSuccess(
+          'Accessibility preferences applied. ' +
+          'Now configure security PINs.'
         );
 
-        navigateTo('screen-welcome');
-        return;
+        openPinSetup();
       }
-
-      const audioToggle =
-        getField('setup-audio-toggle');
-
-      const hapticToggle =
-        getField('setup-haptic-toggle');
-
-      const themeSelect =
-        getField('setup-theme-select');
-
-      if (audioToggle) {
-        state.preferences.speechEnabled =
-          audioToggle.checked;
-      }
-
-      if (hapticToggle) {
-        state.preferences.hapticEnabled =
-          hapticToggle.checked;
-      }
-
-      if (themeSelect?.value) {
-        setTheme(themeSelect.value);
-      }
-
-      announceSuccess(
-        'Accessibility preferences applied. ' +
-        'Now create your normal and emergency security PINs.'
-      );
-
-      openPinSetup();
-    });
+    );
 
   /* ---------------- SECURITY PIN SETUP ---------------- */
 
@@ -1508,13 +1816,12 @@ function initFormInteractions() {
       if (pinSetupBusy) return;
 
       showFieldError(
-        'pin-setup-error',
-        ''
+        'pin-setup-error'
       );
 
       if (!getStoredToken()) {
         announceError(
-          'Please sign in before setting security PINs.'
+          'Please sign in first.'
         );
 
         navigateTo('screen-welcome');
@@ -1531,49 +1838,90 @@ function initFormInteractions() {
           error.message
         );
 
-        announceError(error.message);
+        announceError(
+          error.message
+        );
+
         return;
       }
 
       pinSetupBusy = true;
 
       const submitButton =
-        getField('btn-submit-pin-setup');
+        getField(
+          'btn-submit-pin-setup'
+        );
 
       setBusy(
         submitButton,
         true,
-        'Saving PINs securely...'
+        'Saving PINs...'
       );
 
       try {
+        const passwordInput =
+          ensurePinPasswordField();
+
+        const currentPassword =
+          passwordInput?.value || '';
+
         const result =
-          await authenticatedRequest(
-            '/pin/setup',
-            {
-              standardPin:
-                pins.standardPin,
+          await apiSetupPin({
+            standardPin:
+              pins.standardPin,
 
-              duressPin:
-                pins.duressPin
-            }
-          );
+            duressPin:
+              pins.duressPin,
 
-        if (!result.success) {
-          throw new Error(
-            result.error ||
-            'Unable to save security PINs.'
-          );
+            ...(currentPassword
+              ? { currentPassword }
+              : {})
+          });
+
+        if (
+          !result.ok ||
+          result.data?.success !== true
+        ) {
+          const message =
+            result.data?.error ||
+            'Unable to save security PINs.';
+
+          if (
+            result.status === 403 &&
+            /current password/i.test(message)
+          ) {
+            passwordInput.required = true;
+
+            passwordInput.focus();
+
+            throw new Error(
+              'These PINs already exist. ' +
+              'Enter your current login password to update them.'
+            );
+          }
+
+          const error =
+            new Error(message);
+
+          error.status =
+            result.status;
+
+          throw error;
         }
 
         onboardingRequired = false;
 
         clearPinSetupFields();
+
+        if (passwordInput) {
+          passwordInput.required = false;
+        }
+
         updateGuardianOnboardingUI();
 
         announceSuccess(
-          'Both security PINs were saved successfully. ' +
-          'Next, register and verify your trusted contacts.'
+          'Both security PINs saved successfully. ' +
+          'Now verify your trusted guardians.'
         );
 
         navigateTo('screen-contacts');
@@ -1587,7 +1935,9 @@ function initFormInteractions() {
           error.message
         );
 
-        announceError(error.message);
+        announceError(
+          error.message
+        );
 
         if (error.status === 401) {
           clearSession();
@@ -1608,7 +1958,7 @@ function initFormInteractions() {
 }
 
 /* ============================================================
-   GESTURE ENGINES
+   GESTURE PIN ENGINES
 ============================================================ */
 
 function initGestureEngines() {
@@ -1622,14 +1972,16 @@ function initGestureEngines() {
     );
   }
 
-  setPinCompleteCallback(sequence => {
-    if (!canAccessProtectedScreens()) {
-      clearPinGestures();
-      return;
-    }
+  setPinCompleteCallback(
+    sequence => {
+      if (!canAccessProtectedScreens()) {
+        clearPinGestures();
+        return;
+      }
 
-    verifyEnteredPin(sequence);
-  });
+      verifyEnteredPin(sequence);
+    }
+  );
 
   getField('btn-pin-undo')
     ?.addEventListener(
@@ -1646,39 +1998,48 @@ function initGestureEngines() {
   document.querySelectorAll(
     '.btn-pin-digit'
   ).forEach(button => {
-    button.addEventListener('click', () => {
-      if (!canAccessProtectedScreens()) {
-        return;
-      }
+    button.addEventListener(
+      'click',
+      () => {
+        if (!canAccessProtectedScreens()) {
+          return;
+        }
 
-      const gesture =
-        button.getAttribute('data-gesture');
+        const gesture =
+          button.getAttribute(
+            'data-gesture'
+          );
 
-      if (gesture) {
-        handlePinGesture(gesture);
+        if (gesture) {
+          handlePinGesture(gesture);
+        }
       }
-    });
+    );
   });
 
-  setupShakeToClear(() => {
-    clearPinGestures();
+  setupShakeToClear(
+    () => {
+      clearPinGestures();
 
-    provideFeedback({
-      text:
-        'Motion shake detected. PIN slots cleared.',
-      gesture: 'ERROR',
-      hapticPattern: 60
-    });
-  });
+      provideFeedback({
+        text:
+          'Shake detected. PIN cleared.',
+        hapticPattern: 60
+      });
+    }
+  );
 
   getField('btn-switch-to-stealth')
-    ?.addEventListener('click', () => {
-      if (!canAccessProtectedScreens()) {
-        return;
-      }
+    ?.addEventListener(
+      'click',
+      () => {
+        if (!canAccessProtectedScreens()) {
+          return;
+        }
 
-      navigateTo('screen-stealth');
-    });
+        navigateTo('screen-stealth');
+      }
+    );
 
   const stealthCanvas =
     getField('stealth-touch-canvas');
@@ -1715,12 +2076,13 @@ function initGestureEngines() {
 function exitStealthMode() {
   clearPinGestures();
 
-  navigateProtected('screen-dashboard');
+  navigateProtected(
+    'screen-dashboard'
+  );
 
   provideFeedback({
     text:
-      'Exited Black Stealth Mode. Display restored.',
-    gesture: 'SUCCESS',
+      'Stealth mode exited.',
     hapticPattern: 60
   });
 }
@@ -1739,44 +2101,60 @@ function initScannerControls() {
   document.querySelectorAll(
     '.btn-simulate-qr'
   ).forEach(button => {
-    button.addEventListener('click', () => {
-      if (!canAccessProtectedScreens()) {
-        return;
+    button.addEventListener(
+      'click',
+      () => {
+        if (!canAccessProtectedScreens()) {
+          return;
+        }
+
+        simulateScannedQR({
+          merchant:
+            button.getAttribute(
+              'data-merchant'
+            ),
+
+          amount:
+            button.getAttribute(
+              'data-amount'
+            ),
+
+          fee:
+            button.getAttribute(
+              'data-fee'
+            ),
+
+          category:
+            button.getAttribute(
+              'data-category'
+            )
+        });
       }
-
-      simulateScannedQR({
-        merchant:
-          button.getAttribute('data-merchant'),
-
-        amount:
-          button.getAttribute('data-amount'),
-
-        fee:
-          button.getAttribute('data-fee'),
-
-        category:
-          button.getAttribute('data-category')
-      });
-    });
+    );
   });
 
   getField('btn-decode-manual-qr')
-    ?.addEventListener('click', () => {
-      if (!canAccessProtectedScreens()) {
-        return;
-      }
+    ?.addEventListener(
+      'click',
+      () => {
+        if (!canAccessProtectedScreens()) {
+          return;
+        }
 
-      const raw =
-        getValue('input-manual-qr');
+        const raw =
+          getValue('input-manual-qr');
 
-      if (raw) {
+        if (!raw) {
+          announceError(
+            'Enter a QR payload first.'
+          );
+
+          return;
+        }
+
         onQRCodeLocked(raw);
-      } else {
-        announceError(
-          'Please enter a QR payload to decode.'
-        );
       }
-    });
+    );
 }
 
 /* ============================================================
@@ -1791,9 +2169,10 @@ function initPaymentActions() {
     );
 
   getField('btn-play-currency-vibrate')
-    ?.addEventListener('click', () => {
-      playTactileCurrencyPattern();
-    });
+    ?.addEventListener(
+      'click',
+      playTactileCurrencyPattern
+    );
 
   getField('btn-stop-currency-vibrate')
     ?.addEventListener(
@@ -1808,61 +2187,90 @@ function initPaymentActions() {
     );
 
   getField('btn-proceed-to-pin')
-    ?.addEventListener('click', () => {
-      if (!canAccessProtectedScreens()) {
-        return;
+    ?.addEventListener(
+      'click',
+      () => {
+        if (!canAccessProtectedScreens()) {
+          return;
+        }
+
+        clearPinGestures();
+
+        navigateTo('screen-gesture-pin');
+
+        provideFeedback({
+          text:
+            'Enter your four-gesture security PIN.',
+          priority: true
+        });
       }
-
-      clearPinGestures();
-
-      navigateTo('screen-gesture-pin');
-
-      provideFeedback({
-        text:
-          'Enter your four-gesture PIN.',
-        priority: true
-      });
-    });
+    );
 
   getField('btn-cancel-payment')
-    ?.addEventListener('click', () => {
-      clearPinGestures();
+    ?.addEventListener(
+      'click',
+      () => {
+        clearPinGestures();
 
-      provideFeedback({
-        text: 'Transaction cancelled.',
-        gesture: 'ERROR',
-        hapticPattern: 60
-      });
+        state.currentTransaction = null;
 
-      navigateProtected('screen-dashboard');
-    });
+        provideFeedback({
+          text:
+            'Transaction cancelled.',
+          hapticPattern: 60
+        });
+
+        navigateProtected(
+          'screen-dashboard'
+        );
+      }
+    );
 
   getField('btn-result-done')
-    ?.addEventListener('click', () => {
-      navigateProtected('screen-dashboard');
-    });
+    ?.addEventListener(
+      'click',
+      () => {
+        navigateProtected(
+          'screen-dashboard'
+        );
+      }
+    );
 
   getField('btn-result-retry')
-    ?.addEventListener('click', () => {
-      if (!canAccessProtectedScreens()) {
-        return;
-      }
+    ?.addEventListener(
+      'click',
+      () => {
+        if (!canAccessProtectedScreens()) {
+          return;
+        }
 
-      clearPinGestures();
-      navigateTo('screen-gesture-pin');
-    });
+        clearPinGestures();
+
+        navigateTo(
+          'screen-gesture-pin'
+        );
+      }
+    );
 
   getField('btn-result-cancel')
-    ?.addEventListener('click', () => {
-      navigateProtected('screen-dashboard');
-    });
+    ?.addEventListener(
+      'click',
+      () => {
+        navigateProtected(
+          'screen-dashboard'
+        );
+      }
+    );
 
   getField('history-filter-select')
-    ?.addEventListener('change', event => {
-      renderHistoryList(
-        event.target.value
-      );
-    });
+    ?.addEventListener(
+      'change',
+      event => {
+        renderHistoryList(
+          event.target.value
+        );
+      }
+    );
 }
 
 /* ============================================================
@@ -1881,7 +2289,8 @@ function initPracticeLab() {
       canvas,
       gesture => {
         const digit =
-          GESTURE_TO_DIGIT[gesture] ?? '';
+          GESTURE_TO_DIGIT[gesture] ??
+          '';
 
         if (detectedText) {
           detectedText.textContent =
@@ -1891,18 +2300,12 @@ function initPracticeLab() {
         provideFeedback({
           text:
             `${gesture}, Digit ${digit}`,
-
           gesture,
-
           hapticPattern:
             gesture === 'TAP' ||
             gesture === 'SINGLE_TAP'
               ? 40
               : 80,
-
-          hapticLabel:
-            `Practiced: ${gesture}`,
-
           priority: true
         });
       }
@@ -1910,29 +2313,33 @@ function initPracticeLab() {
   }
 
   getField('btn-practice-reset')
-    ?.addEventListener('click', () => {
-      if (detectedText) {
-        detectedText.textContent =
-          'Swipe or Tap Inside Box';
-      }
+    ?.addEventListener(
+      'click',
+      () => {
+        if (detectedText) {
+          detectedText.textContent =
+            'Swipe or Tap Inside Box';
+        }
 
-      provideFeedback({
-        text:
-          'Practice log reset.'
-      });
-    });
+        provideFeedback({
+          text:
+            'Practice log reset.'
+        });
+      }
+    );
 
   getField('btn-practice-test-pin')
-    ?.addEventListener('click', () => {
-      // Practice must never authorize a payment.
-
-      provideFeedback({
-        text:
-          'Practice mode is available in the gesture box. ' +
-          'Real PIN verification is not part of this practice test.',
-        priority: true
-      });
-    });
+    ?.addEventListener(
+      'click',
+      () => {
+        provideFeedback({
+          text:
+            'Practice gestures in the gesture box. ' +
+            'Practice mode cannot authorize payments.',
+          priority: true
+        });
+      }
+    );
 }
 
 /* ============================================================
@@ -1962,6 +2369,10 @@ function initSettingsControls() {
             String(enabled)
           );
 
+        if (!enabled) {
+          stopSpeech();
+        }
+
         provideFeedback({
           text:
             `Speech synthesis ${enabled ? 'enabled' : 'disabled'}`
@@ -1978,13 +2389,17 @@ function initSettingsControls() {
 
   if (rateSlider) {
     rateSlider.value =
-      String(state.preferences.speechRate);
+      String(
+        state.preferences.speechRate
+      );
 
     rateSlider.addEventListener(
       'input',
       event => {
         const value =
-          Number(event.target.value);
+          Number(
+            event.target.value
+          );
 
         state.preferences.speechRate =
           value;
@@ -2042,7 +2457,9 @@ function initSettingsControls() {
     themeSelect.addEventListener(
       'change',
       event => {
-        setTheme(event.target.value);
+        setTheme(
+          event.target.value
+        );
       }
     );
   }
@@ -2057,15 +2474,21 @@ function initSettingsControls() {
     fontSelect.addEventListener(
       'change',
       event => {
-        setFontSize(event.target.value);
+        setFontSize(
+          event.target.value
+        );
       }
     );
   }
 
-  getField('btn-manage-contacts-from-settings')
-    ?.addEventListener('click', () => {
+  getField(
+    'btn-manage-contacts-from-settings'
+  )?.addEventListener(
+    'click',
+    () => {
       void openContactsScreen();
-    });
+    }
+  );
 }
 
 /* ============================================================
@@ -2088,20 +2511,30 @@ function initGlobalKeyboardShortcuts() {
           target.isContentEditable
         );
 
-      if (event.altKey && !isTyping) {
-        switch (event.key.toLowerCase()) {
+      if (
+        event.altKey &&
+        !isTyping
+      ) {
+        switch (
+          event.key.toLowerCase()
+        ) {
           case 's':
             event.preventDefault();
 
-            if (!canAccessProtectedScreens()) {
+            if (
+              !canAccessProtectedScreens()
+            ) {
               return;
             }
 
             if (state.isStealthActive) {
               exitStealthMode();
             } else {
-              navigateTo('screen-stealth');
+              navigateTo(
+                'screen-stealth'
+              );
             }
+
             break;
 
           case 'q':
@@ -2110,6 +2543,7 @@ function initGlobalKeyboardShortcuts() {
             navigateProtected(
               'screen-scanner'
             );
+
             break;
 
           case 'h':
@@ -2118,6 +2552,7 @@ function initGlobalKeyboardShortcuts() {
             navigateProtected(
               'screen-dashboard'
             );
+
             break;
 
           case 't':
@@ -2126,7 +2561,9 @@ function initGlobalKeyboardShortcuts() {
             cycleTheme();
             break;
         }
-      } else if (event.key === 'Escape') {
+      } else if (
+        event.key === 'Escape'
+      ) {
         const activeModal =
           document.querySelector(
             '.modal-overlay.active'
@@ -2141,7 +2578,9 @@ function initGlobalKeyboardShortcuts() {
             'aria-hidden',
             'true'
           );
-        } else if (state.isStealthActive) {
+        } else if (
+          state.isStealthActive
+        ) {
           exitStealthMode();
         }
       }

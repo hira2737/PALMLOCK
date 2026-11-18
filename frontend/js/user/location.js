@@ -1,153 +1,314 @@
+
 /**
  * PALMLOCK — Touch Beyond Vision
- * Geolocation & GPS Capture Engine
- * Captures real device coordinates with permission checks, accuracy bounds,
- * and emergency telemetry formatting.
+ * GPS and Emergency Location Engine
+ *
+ * Only real browser geolocation is treated as GPS.
+ * No simulated coordinates are used for emergencies.
  */
 
 import { state } from './state.js';
 import { provideFeedback } from './accessibility.js';
-import { CHENNAI_LOCATIONS } from '../shared/demoData.js';
 
-let isRequesting = false;
+const NORMAL_TIMEOUT_MS = 10000;
+const EMERGENCY_TIMEOUT_MS = 4000;
+const MAX_CACHED_AGE_MS = 60000;
+const MAX_ACCEPTABLE_ACCURACY_METERS = 10000;
 
-/**
- * Request Location Permission with Prior User Notification
- */
-export async function requestLocationAccess(silent = false) {
-  if (isRequesting) return;
-  isRequesting = true;
+let activeRequest = null;
+let lastRealFix = null;
 
-  if (!navigator.geolocation) {
-    state.location.permissionState = 'unavailable';
-    state.location.formatted = 'Geolocation not supported on this browser';
-    if (!silent) {
-      provideFeedback({
-        text: 'Geolocation API is not supported on this browser or platform.',
-        gesture: 'ERROR'
-      });
-    }
-    isRequesting = false;
-    return false;
-  }
-
-  return new Promise((resolve) => {
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        isRequesting = false;
-        state.location.permissionState = 'granted';
-        state.location.latitude = position.coords.latitude;
-        state.location.longitude = position.coords.longitude;
-        state.location.accuracy = Math.round(position.coords.accuracy);
-        state.location.timestamp = new Date(position.timestamp).toLocaleTimeString();
-        state.location.formatted = `${position.coords.latitude.toFixed(4)}° N, ${position.coords.longitude.toFixed(4)}° E (±${Math.round(position.coords.accuracy)}m)`;
-
-        updateLocationDisplayInUI();
-
-        if (!silent) {
-          provideFeedback({
-            text: `Location captured successfully. Accuracy within ${Math.round(position.coords.accuracy)} meters.`,
-            gesture: 'SUCCESS',
-            hapticPattern: [50, 50]
-          });
-        }
-        resolve(true);
-      },
-      (error) => {
-        isRequesting = false;
-        if (error.code === error.PERMISSION_DENIED) {
-          state.location.permissionState = 'denied';
-          state.location.formatted = 'Location permission denied by user';
-          if (!silent) {
-            provideFeedback({
-              text: 'Location permission was denied. Emergency dispatches will note coordinates as unavailable.',
-              gesture: 'ERROR'
-            });
-          }
-        } else {
-          state.location.permissionState = 'unavailable';
-          state.location.formatted = 'Location signal currently unavailable';
-          if (!silent) {
-            provideFeedback({
-              text: 'GPS satellites currently unavailable. Check your device settings.',
-              gesture: 'ERROR'
-            });
-          }
-        }
-        updateLocationDisplayInUI();
-        resolve(false);
-      },
-      {
-        enableHighAccuracy: true,
-        timeout: 10000,
-        maximumAge: 30000
-      }
-    );
-  });
+function isValidCoordinate(lat, lng) {
+  return (
+    typeof lat === 'number' &&
+    typeof lng === 'number' &&
+    Number.isFinite(lat) &&
+    Number.isFinite(lng) &&
+    lat >= -90 &&
+    lat <= 90 &&
+    lng >= -180 &&
+    lng <= 180
+  );
 }
 
-/**
- * Fast Emergency Telemetry Capture
- * Non-blocking location capture for urgent Duress or SOS events
- */
-export async function captureEmergencyLocation() {
-  // If we already have a recent coordinate within 1 minute, use it
-  if (state.location.latitude && state.location.longitude) {
-    return {
-      lat: state.location.latitude,
-      lng: state.location.longitude,
-      accuracyMeters: state.location.accuracy,
-      coords: state.location.formatted,
-      isRealGPS: true
-    };
+function formatLocation(lat, lng, accuracy) {
+  const latitudeDirection = lat >= 0 ? 'N' : 'S';
+  const longitudeDirection = lng >= 0 ? 'E' : 'W';
+
+  const accuracyText =
+    Number.isFinite(accuracy)
+      ? ` (accuracy ±${Math.round(accuracy)}m)`
+      : '';
+
+  return (
+    `${Math.abs(lat).toFixed(5)}° ${latitudeDirection}, ` +
+    `${Math.abs(lng).toFixed(5)}° ${longitudeDirection}` +
+    accuracyText
+  );
+}
+
+function updateLocationDisplayInUI() {
+  const element = document.getElementById(
+    'user-location-status'
+  );
+
+  if (element) {
+    element.textContent =
+      state.location.formatted ||
+      'Location unavailable';
+  }
+}
+
+function clearCurrentLocation(status, message) {
+  state.location.permissionState = status;
+  state.location.latitude = null;
+  state.location.longitude = null;
+  state.location.accuracy = null;
+  state.location.timestamp = null;
+  state.location.formatted = message;
+  state.location.isRealGPS = false;
+
+  lastRealFix = null;
+
+  updateLocationDisplayInUI();
+}
+
+function normalizePosition(position) {
+  if (!position || !position.coords) {
+    return null;
   }
 
-  // Attempt live GPS capture with 4 second timeout
-  if (navigator.geolocation) {
-    try {
-      const pos = await new Promise((resolve, reject) => {
-        navigator.geolocation.getCurrentPosition(resolve, reject, {
-          enableHighAccuracy: true,
-          timeout: 4000,
-          maximumAge: 60000
-        });
-      });
+  const lat = Number(position.coords.latitude);
+  const lng = Number(position.coords.longitude);
+  const accuracy = Number(position.coords.accuracy);
+  const timestamp = Number(position.timestamp);
 
-      state.location.latitude = pos.coords.latitude;
-      state.location.longitude = pos.coords.longitude;
-      state.location.accuracy = Math.round(pos.coords.accuracy);
-      state.location.formatted = `${pos.coords.latitude.toFixed(4)}° N, ${pos.coords.longitude.toFixed(4)}° E`;
-
-      return {
-        lat: pos.coords.latitude,
-        lng: pos.coords.longitude,
-        accuracyMeters: Math.round(pos.coords.accuracy),
-        coords: state.location.formatted,
-        isRealGPS: true
-      };
-    } catch (err) {
-      console.info('Live GPS capture timed out or denied during emergency. Using certified demo incident telemetry.');
-    }
+  if (!isValidCoordinate(lat, lng)) {
+    return null;
   }
 
-  // Fallback to certified Chennai reference coordinates for demo
-  const defaultLoc = CHENNAI_LOCATIONS.centralMetro;
+  if (
+    !Number.isFinite(accuracy) ||
+    accuracy < 0 ||
+    accuracy > MAX_ACCEPTABLE_ACCURACY_METERS
+  ) {
+    return null;
+  }
+
+  if (
+    !Number.isFinite(timestamp) ||
+    timestamp > Date.now() + 5000 ||
+    Date.now() - timestamp > MAX_CACHED_AGE_MS
+  ) {
+    return null;
+  }
+
   return {
-    lat: defaultLoc.lat,
-    lng: defaultLoc.lng,
-    accuracyMeters: defaultLoc.accuracy,
-    coords: defaultLoc.formatted,
-    isRealGPS: false,
-    note: 'Demo Reference Location: Chennai Central Metro'
+    lat,
+    lng,
+    accuracyMeters: Math.round(accuracy),
+    capturedAt: new Date(timestamp).toISOString(),
+    timestamp,
+    coords: formatLocation(lat, lng, accuracy),
+    isRealGPS: true,
+    source: 'device',
+    simulated: false
   };
 }
 
+function saveRealFix(fix) {
+  lastRealFix = fix;
+
+  state.location.permissionState = 'granted';
+  state.location.latitude = fix.lat;
+  state.location.longitude = fix.lng;
+  state.location.accuracy = fix.accuracyMeters;
+  state.location.timestamp = fix.capturedAt;
+  state.location.formatted = fix.coords;
+  state.location.isRealGPS = true;
+
+  updateLocationDisplayInUI();
+}
+
+function getRecentRealFix() {
+  if (
+    !lastRealFix ||
+    !lastRealFix.isRealGPS ||
+    Date.now() - lastRealFix.timestamp >
+      MAX_CACHED_AGE_MS
+  ) {
+    return null;
+  }
+
+  return { ...lastRealFix };
+}
+
+function getGeolocationErrorMessage(error) {
+  if (error?.code === 1) {
+    return 'Location permission denied';
+  }
+
+  if (error?.code === 2) {
+    return 'Location signal unavailable';
+  }
+
+  if (error?.code === 3) {
+    return 'Location request timed out';
+  }
+
+  return 'Unable to determine device location';
+}
+
+function getPermissionState(error) {
+  if (error?.code === 1) {
+    return 'denied';
+  }
+
+  return 'unavailable';
+}
+
+function capturePosition(timeoutMs) {
+  if (!navigator.geolocation) {
+    return Promise.reject({
+      code: 2,
+      message: 'Geolocation unsupported'
+    });
+  }
+
+  // Share a pending request rather than launching
+  // overlapping browser permission prompts.
+  if (activeRequest) {
+    return activeRequest;
+  }
+
+  activeRequest = new Promise((resolve, reject) => {
+    navigator.geolocation.getCurrentPosition(
+      position => {
+        const fix = normalizePosition(position);
+
+        if (!fix) {
+          reject({
+            code: 2,
+            message: 'Invalid or stale GPS reading'
+          });
+          return;
+        }
+
+        saveRealFix(fix);
+        resolve(fix);
+      },
+      reject,
+      {
+        enableHighAccuracy: true,
+        timeout: timeoutMs,
+        maximumAge: MAX_CACHED_AGE_MS
+      }
+    );
+  });
+
+  activeRequest.finally(() => {
+    activeRequest = null;
+  }).catch(() => {});
+
+  return activeRequest;
+}
+
 /**
- * Update UI elements that display location status
+ * Request device location access.
+ *
+ * Returns true when a valid GPS fix was obtained.
+ * Returns false when location is unavailable.
  */
-function updateLocationDisplayInUI() {
-  const locEl = document.getElementById('user-location-status');
-  if (locEl) {
-    locEl.textContent = state.location.formatted;
+export async function requestLocationAccess(
+  silent = false
+) {
+  try {
+    const fix = await capturePosition(
+      NORMAL_TIMEOUT_MS
+    );
+
+    if (!silent) {
+      provideFeedback({
+        text:
+          'Location captured successfully. ' +
+          `Accuracy approximately ${fix.accuracyMeters} meters.`,
+        gesture: 'SUCCESS',
+        hapticPattern: [50, 50]
+      });
+    }
+
+    return true;
+  } catch (error) {
+    const message =
+      getGeolocationErrorMessage(error);
+
+    clearCurrentLocation(
+      getPermissionState(error),
+      message
+    );
+
+    if (!silent) {
+      provideFeedback({
+        text:
+          `${message}. Emergency incidents will ` +
+          'report location as unavailable.',
+        gesture: 'ERROR'
+      });
+    }
+
+    console.warn(
+      '[PALMLOCK GPS]',
+      message
+    );
+
+    return false;
+  }
+}
+
+/**
+ * Capture a real location for an emergency.
+ *
+ * Returns:
+ * - Real GPS coordinates when available
+ * - Null coordinates when GPS is unavailable
+ *
+ * Never substitutes a demo landmark.
+ */
+export async function captureEmergencyLocation() {
+  const cached = getRecentRealFix();
+
+  if (cached) {
+    return cached;
+  }
+
+  try {
+    return await capturePosition(
+      EMERGENCY_TIMEOUT_MS
+    );
+  } catch (error) {
+    const message =
+      getGeolocationErrorMessage(error);
+
+    clearCurrentLocation(
+      getPermissionState(error),
+      message
+    );
+
+    console.warn(
+      '[PALMLOCK EMERGENCY GPS]',
+      `${message}. No coordinates will be attached.`
+    );
+
+    return {
+      lat: null,
+      lng: null,
+      accuracyMeters: null,
+      coords: null,
+      capturedAt: null,
+      isRealGPS: false,
+      source: 'unavailable',
+      simulated: false,
+      note: message
+    };
   }
 }
